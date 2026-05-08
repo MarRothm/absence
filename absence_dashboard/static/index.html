@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Absence Management Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1>Absence Dashboard</h1>
+    <div class="header-controls">
+      <button id="btn-reload" class="btn btn-reload" title="Reload Excel data">⟳ Reload</button>
+      <button id="btn-toggle-phases" class="btn btn-secondary">Phases</button>
+      <button id="btn-toggle-deps" class="btn btn-secondary">Dependencies</button>
+      <button id="btn-toggle-clusters" class="btn btn-secondary">Clusters</button>
+    </div>
+  </header>
+
+  <div id="warnings"></div>
+
+  <main class="app-body">
+    <section id="timeline-section">
+      <div id="timeline-grid"></div>
+    </section>
+
+    <aside id="phase-panel" class="side-panel hidden">
+      <h2>Project Phases</h2>
+      <div class="panel-form">
+        <label>Phase name
+          <input type="text" id="phase-name" placeholder="e.g. Go-Live">
+        </label>
+        <label>Start date
+          <input type="date" id="phase-start">
+        </label>
+        <label>End date
+          <input type="date" id="phase-end">
+        </label>
+        <button id="btn-add-phase" class="btn btn-primary">Add Phase</button>
+        <div id="phase-error" class="inline-error hidden"></div>
+      </div>
+      <ul id="phase-list" class="item-list"></ul>
+    </aside>
+
+    <aside id="dependency-panel" class="side-panel hidden">
+      <h2>Dependencies</h2>
+      <div class="panel-form">
+        <label>From (at-risk person)
+          <select id="dep-from"><option value="">— select —</option></select>
+        </label>
+        <label>To (person depended on)
+          <select id="dep-to"><option value="">— select —</option></select>
+        </label>
+        <button id="btn-add-dep" class="btn btn-primary">Add Dependency</button>
+        <div id="dep-error" class="inline-error hidden"></div>
+      </div>
+      <ul id="dep-list" class="item-list"></ul>
+    </aside>
+
+    <aside id="cluster-panel" class="side-panel hidden">
+      <h2>Skill Clusters</h2>
+      <div class="panel-form">
+        <label>Cluster name
+          <input type="text" id="cluster-name" placeholder="e.g. Backend">
+        </label>
+        <label>Members
+          <select id="cluster-members" multiple size="5"></select>
+        </label>
+        <button id="btn-create-cluster" class="btn btn-primary">Create Cluster</button>
+        <div id="cluster-error" class="inline-error hidden"></div>
+      </div>
+      <ul id="cluster-list" class="item-list"></ul>
+    </aside>
+  </main>
+
+  <script src="/static/main.js"></script>
+</body>
+</html>

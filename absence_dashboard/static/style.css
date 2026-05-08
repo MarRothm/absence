@@ -1,0 +1,357 @@
+/* -------------------------------------------------------------------------
+   Custom properties
+   ------------------------------------------------------------------------- */
+:root {
+  --color-absent:            #4a90d9;
+  --color-at-risk:           #e8a838;
+  --color-bottleneck-absent: #c0392b;
+  --color-bottleneck-row:    #fdecea;
+  --color-cluster-sep:       #7f8c8d;
+  --color-phase:             #8e44ad;
+  --color-header-bg:         #2c3e50;
+  --color-header-text:       #ecf0f1;
+  --color-cell-border:       #bdc3c9;
+  --color-bg:                #f5f6fa;
+  --day-cell-width:          20px;   /* one working-day sub-column */
+  --cw-group-width:          100px;  /* 5 × 20px = one calendar week */
+  --row-height:              32px;
+  --name-col-width:          180px;
+}
+
+/* -------------------------------------------------------------------------
+   Reset / base
+   ------------------------------------------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  background: var(--color-bg);
+  color: #2c3e50;
+}
+
+/* -------------------------------------------------------------------------
+   Header
+   ------------------------------------------------------------------------- */
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--color-header-bg);
+  color: var(--color-header-text);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.app-header h1 { font-size: 16px; font-weight: 600; flex: 1; }
+
+.header-controls { display: flex; gap: 8px; }
+
+.btn {
+  padding: 5px 12px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+}
+.btn-primary  { background: #3498db; color: #fff; }
+.btn-secondary{ background: #566573; color: #fff; }
+.btn-reload   { background: #27ae60; color: #fff; }
+.btn:hover    { opacity: 0.85; }
+
+/* -------------------------------------------------------------------------
+   Warnings
+   ------------------------------------------------------------------------- */
+#warnings { padding: 0 16px; }
+
+.warning-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 8px 12px;
+  background: #fef9e7;
+  border-left: 4px solid #f39c12;
+  border-radius: 0 4px 4px 0;
+  font-size: 12px;
+}
+.warning-banner button { background: none; border: none; cursor: pointer; font-size: 14px; }
+
+/* -------------------------------------------------------------------------
+   App body layout
+   ------------------------------------------------------------------------- */
+.app-body {
+  display: flex;
+  gap: 0;
+  height: calc(100vh - 50px);
+}
+
+#timeline-section {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 0;
+}
+
+/* -------------------------------------------------------------------------
+   Timeline grid
+   ------------------------------------------------------------------------- */
+#timeline-grid {
+  display: inline-block;
+  min-width: 100%;
+}
+
+.tg-row {
+  display: flex;
+  align-items: stretch;
+  min-height: var(--row-height);
+  border-bottom: 1px solid var(--color-cell-border);
+}
+.tg-row:hover { background: rgba(0,0,0,.03); }
+
+/* Sticky name column */
+.tg-name {
+  min-width: var(--name-col-width);
+  max-width: var(--name-col-width);
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 500;
+  background: #fff;
+  position: sticky;
+  left: 0;
+  z-index: 10;
+  border-right: 2px solid var(--color-cell-border);
+}
+
+/* Header row */
+.tg-row.tg-header .tg-name,
+.tg-row.tg-header .tg-cell {
+  font-weight: 700;
+  font-size: 11px;
+  background: #eaecee;
+  color: #555;
+  text-align: center;
+}
+.tg-row.tg-header .tg-name { background: #d5d8dc; }
+
+/* CW group header cell (spans 5 day sub-columns visually) */
+.tg-cw-group {
+  min-width: var(--cw-group-width);
+  max-width: var(--cw-group-width);
+  border-right: 2px solid var(--color-cell-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  background: #eaecee;
+}
+
+/* Individual working-day sub-column cells */
+.tg-day-cell {
+  min-width: var(--day-cell-width);
+  max-width: var(--day-cell-width);
+  border-right: 1px solid transparent;  /* hidden by default; shown at week boundaries */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+}
+
+/* Week-start day gets a visible left border to delimit calendar weeks */
+.tg-day-cell.week-start {
+  border-left: 2px solid var(--color-cell-border);
+}
+
+.tg-day-cell.tg-day-header {
+  color: #666;
+  background: #f4f6f7;
+  font-weight: 600;
+}
+
+/* ---- Absence states with continuous-bar border suppression ---- */
+
+/* Absent (normal) */
+.tg-day-cell.absent { background: var(--color-absent); }
+
+/* Start: round left end, suppress right border */
+.tg-day-cell.ab-start {
+  border-radius: 4px 0 0 4px;
+  border-right: none;
+}
+/* Mid: no rounding, suppress both borders for seamless join */
+.tg-day-cell.ab-mid {
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+}
+/* End: round right end, suppress left border */
+.tg-day-cell.ab-end {
+  border-radius: 0 4px 4px 0;
+  border-left: none;
+}
+/* Single-day span: fully rounded pill */
+.tg-day-cell.ab-single { border-radius: 4px; }
+
+/* Bottleneck absent (same border-suppression pattern, different colour) */
+.tg-day-cell.bottleneck-absent { background: var(--color-bottleneck-absent); }
+
+.tg-day-cell.ba-start  { border-radius: 4px 0 0 4px; border-right: none; }
+.tg-day-cell.ba-mid    { border-radius: 0; border-left: none; border-right: none; }
+.tg-day-cell.ba-end    { border-radius: 0 4px 4px 0; border-left: none; }
+.tg-day-cell.ba-single { border-radius: 4px; }
+
+/* At-risk: full week band (all 5 day cells in the week get this class) */
+.tg-day-cell.at-risk { background: var(--color-at-risk); opacity: 0.55; }
+
+/* Bottleneck row header */
+.tg-row.is-bottleneck .tg-name {
+  background: var(--color-bottleneck-row);
+  border-left: 3px solid var(--color-bottleneck-absent);
+}
+
+/* Cluster separator */
+.tg-row.cluster-sep {
+  background: #eaecee;
+  min-height: 22px;
+  border-top: 2px solid var(--color-cluster-sep);
+}
+.tg-row.cluster-sep .tg-name {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-cluster-sep);
+  background: #eaecee;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Bottleneck badge */
+.bottleneck-badge {
+  font-size: 10px;
+  background: var(--color-bottleneck-absent);
+  color: #fff;
+  border-radius: 3px;
+  padding: 1px 4px;
+  white-space: nowrap;
+}
+
+/* -------------------------------------------------------------------------
+   Side panels
+   ------------------------------------------------------------------------- */
+.side-panel {
+  width: 280px;
+  min-width: 280px;
+  border-left: 1px solid #d5d8dc;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.side-panel.hidden { display: none; }
+
+.side-panel h2 {
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  border-bottom: 1px solid #d5d8dc;
+  background: #eaecee;
+}
+
+.panel-form {
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-bottom: 1px solid #d5d8dc;
+}
+.panel-form label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; font-weight: 600; }
+.panel-form select,
+.panel-form input { font-size: 12px; padding: 4px 6px; border: 1px solid #bdc3c9; border-radius: 3px; }
+
+.item-list {
+  flex: 1;
+  overflow-y: auto;
+  list-style: none;
+  padding: 6px 0;
+}
+
+.item-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 12px;
+}
+.item-list li span { flex: 1; }
+
+.btn-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #c0392b;
+  font-size: 14px;
+  padding: 0 2px;
+}
+
+.cluster-item-members {
+  font-size: 11px;
+  color: #7f8c8d;
+  display: block;
+}
+
+.inline-error {
+  font-size: 11px;
+  color: #c0392b;
+  background: #fdecea;
+  padding: 4px 8px;
+  border-radius: 3px;
+}
+.inline-error.hidden { display: none; }
+
+/* Empty state */
+.empty-state {
+  padding: 32px 16px;
+  text-align: center;
+  color: #7f8c8d;
+  font-size: 13px;
+}
+
+/* -------------------------------------------------------------------------
+   Phase banner rows
+   ------------------------------------------------------------------------- */
+.tg-row.tg-phase-row {
+  min-height: 20px;
+  background: rgba(142, 68, 173, 0.08);
+  border-bottom: 1px solid rgba(142, 68, 173, 0.25);
+}
+
+.tg-row.tg-phase-row .tg-name {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-phase);
+  background: rgba(142, 68, 173, 0.08);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.tg-day-cell.phase-active {
+  background: var(--color-phase);
+  opacity: 0.35;
+}
+
+.tg-day-cell.phase-start {
+  border-radius: 4px 0 0 4px;
+}
+
+.tg-day-cell.phase-end {
+  border-radius: 0 4px 4px 0;
+}
+
+.tg-day-cell.phase-start.phase-end {
+  border-radius: 4px;
+}
