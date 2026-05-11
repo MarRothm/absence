@@ -1,4 +1,5 @@
 """Pure functions for managing project phases (no I/O, no Flask)."""
+from __future__ import annotations
 
 
 def update_phase(
