@@ -3,6 +3,22 @@
 let dashboardData = null;
 
 // ---------------------------------------------------------------------------
+// Last-loaded timestamp display  (FR-025)
+// ---------------------------------------------------------------------------
+
+function updateLastLoaded(isoStr) {
+  const el = document.getElementById("last-loaded");
+  if (!el || !isoStr) return;
+  // Parse "YYYY-MM-DDTHH:MM:SS" — avoid timezone shifts by constructing locally
+  const [datePart, timePart] = isoStr.split("T");
+  const [year, month, day] = datePart.split("-").map(Number);
+  const [hours, minutes] = timePart.split(":");
+  const monthName = new Date(year, month - 1, day)
+    .toLocaleDateString("en-GB", { month: "short" });
+  el.textContent = `Last loaded: ${day} ${monthName} ${year}, ${hours}:${minutes}`;
+}
+
+// ---------------------------------------------------------------------------
 // API helpers
 // ---------------------------------------------------------------------------
 
@@ -637,6 +653,7 @@ document.getElementById("btn-reload").addEventListener("click", async () => {
     const res = await apiFetch("/api/refresh", "POST");
     if (res.ok) {
       dashboardData = res.data;
+      updateLastLoaded(dashboardData.last_loaded);
       renderTimeline(dashboardData);
       renderDependencies(dashboardData);
       renderClusters(dashboardData);
@@ -674,6 +691,7 @@ async function refreshDashboard() {
     return;
   }
   dashboardData = res.data;
+  updateLastLoaded(dashboardData.last_loaded);
   renderTimeline(dashboardData);
   renderDependencies(dashboardData);
   renderClusters(dashboardData);

@@ -222,9 +222,15 @@ The API assembles a single `DashboardData` response object for the frontend:
   "clusters": [...],
   "dependencies": [...],
   "skipped_rows": [...],
-  "bottlenecks": ["Bob"]
+  "bottlenecks": ["Bob"],
+  "last_loaded": "2026-05-11T14:32:00"
 }
 ```
+
+**`last_loaded`**: ISO 8601 datetime string (`YYYY-MM-DDTHH:MM:SS`) recording the moment the
+server last successfully read and parsed the Excel data. Set on initial load and updated on every
+successful `POST /api/refresh`. The frontend displays this in the fixed header bar, top-right, in
+the format `"Last loaded: D Mon YYYY, HH:MM"` (e.g., `"Last loaded: 11 May 2026, 14:32"`).
 
 **`calendar_weeks.days`**: The ordered list of 5 Mon–Fri dates for each CW. The frontend uses
 this to map each date to its `<td>` column position and to apply absence/at-risk CSS classes.

@@ -1,9 +1,10 @@
 import os
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from flask import Flask, jsonify, request
 
+from absence_dashboard import data_fetcher
 from absence_dashboard.parser import parse_members
 from absence_dashboard.merger import merge_periods
 from absence_dashboard.state import load_state, save_state, AppState
@@ -48,15 +49,15 @@ def _build_calendar_weeks(today: date = None) -> list:
 # Excel loading helper
 # ---------------------------------------------------------------------------
 
-def _load_excel(excel_path: str) -> tuple:
-    from openpyxl import load_workbook
-    wb = load_workbook(excel_path, read_only=True, data_only=True)
+def _load_excel(source: str) -> tuple:
+    wb = data_fetcher.get_workbook(source)
     ws = wb.active
     members, skipped = parse_members(ws)
     wb.close()
     for m in members:
         m.merged_blocks = merge_periods(m.absence_days)
-    return members, skipped
+    last_loaded = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    return members, skipped, last_loaded
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +121,7 @@ def _assemble_dashboard(app) -> dict:
             {"row": s.row, "reason": s.reason}
             for s in app.config["SKIPPED_ROWS"]
         ],
+        "last_loaded": app.config.get("LAST_LOADED", ""),
     }
 
 
@@ -130,13 +132,14 @@ def _assemble_dashboard(app) -> dict:
 def create_app(excel_path: str, state_path: str = "state/state.json") -> Flask:
     app = Flask(__name__, static_folder="static")
 
-    members, skipped = _load_excel(excel_path)
+    members, skipped, last_loaded = _load_excel(excel_path)
     app.config.update({
         "EXCEL_PATH": excel_path,
         "STATE_PATH": state_path,
         "MEMBERS": members,
         "SKIPPED_ROWS": skipped,
         "STATE": load_state(state_path),
+        "LAST_LOADED": last_loaded,
     })
 
     # ------------------------------------------------------------------
@@ -162,7 +165,7 @@ def create_app(excel_path: str, state_path: str = "state/state.json") -> Flask:
     @app.route("/api/refresh", methods=["POST"])
     def post_refresh():
         try:
-            members, skipped = _load_excel(app.config["EXCEL_PATH"])
+            members, skipped, last_loaded = _load_excel(app.config["EXCEL_PATH"])
         except Exception as e:
             return jsonify({"error": str(e), "stale_data": True}), 422
 
@@ -192,6 +195,7 @@ def create_app(excel_path: str, state_path: str = "state/state.json") -> Flask:
 
         app.config["MEMBERS"] = members
         app.config["SKIPPED_ROWS"] = skipped
+        app.config["LAST_LOADED"] = last_loaded
         save_state(state, app.config["STATE_PATH"])
 
         result = _assemble_dashboard(app)
@@ -434,11 +438,16 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=5002, help="Port to listen on (default 5002)")
     args = parser.parse_args()
 
-    if not os.path.exists(args.excel_file):
-        print(f"Error: File not found: {args.excel_file}", file=sys.stderr)
+    source = args.excel_file
+    if not source.startswith(("http://", "https://")) and not os.path.exists(source):
+        print(f"Error: File not found: {source}", file=sys.stderr)
         sys.exit(1)
 
-    application = create_app(args.excel_file)
+    try:
+        application = create_app(source)
+    except (ConnectionError, FileNotFoundError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
     try:
         application.run(host="localhost", port=args.port, debug=False)
     except OSError as e:

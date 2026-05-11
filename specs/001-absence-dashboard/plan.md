@@ -5,19 +5,21 @@
 
 ## Summary
 
-Build a local Python web application that reads a date-grid `.xlsx` spreadsheet, visualises
-planned absences per project member as a Gantt-style day-level timeline for the remainder of the
-year, and lets the manager define, edit, and remove dependencies, skill clusters, and named project
-phases in the browser UI. All three management panels use an inline row-expansion edit pattern with
-Save/Cancel buttons (FR-022/FR-023); no modal overlays. Technical approach: Flask + openpyxl
-backend; vanilla HTML/CSS/JS frontend; local `state/state.json` for UI config persistence. Day
-sub-columns display single-character weekday labels (M/T/W/T/F). Project phases render as
-horizontal banner rows above member rows.
+Build a local Python web application that reads a date-grid `.xlsx` spreadsheet (from a local file
+path or a public SharePoint share URL — FR-016/FR-024), visualises planned absences per project
+member as a Gantt-style day-level timeline for the remainder of the year, and lets the manager
+define, edit, and remove dependencies, skill clusters, and named project phases in the browser UI.
+All three management panels use an inline row-expansion edit pattern with Save/Cancel buttons
+(FR-022/FR-023); no modal overlays. The fixed header bar shows the date and time the data was last
+successfully loaded, top-right (FR-025). Technical approach: Flask + openpyxl + requests backend;
+vanilla HTML/CSS/JS frontend; local `state/state.json` for UI config persistence. Day sub-columns
+display single-character weekday labels (M/T/W/T/F). Project phases render as horizontal banner
+rows above member rows.
 
 ## Technical Context
 
 **Language/Version**: Python 3.10+
-**Primary Dependencies**: openpyxl 3.x (Excel parsing), Flask 3.x (local web server)
+**Primary Dependencies**: openpyxl 3.x (Excel parsing), Flask 3.x (local web server), requests 2.x (SharePoint URL download)
 **Storage**: `config.json` on disk (UI-defined dependencies, skill clusters, and project phases)
 **Testing**: pytest 7+ with Flask test client for API integration tests
 **Target Platform**: Local development machine (macOS / Windows / Linux); accessed at
@@ -73,6 +75,7 @@ absence_dashboard/
 ├── app.py               # Flask entry point; CLI arg parsing; route registration
 ├── models.py            # Dataclasses: ProjectMember, AbsencePeriod, MergedBlock,
 │                        #   Dependency, SkillCluster, ProjectPhase, UIConfig, CalendarWeek
+├── data_fetcher.py      # CLI arg detection; local file load or SharePoint URL download
 ├── excel_reader.py      # openpyxl parsing; builds per-person absence day sets
 ├── absence_merger.py    # Interval-merge algorithm
 ├── dependency_graph.py  # Dependency CRUD + DFS cycle detection + bottleneck computation
@@ -80,7 +83,7 @@ absence_dashboard/
 ├── phases_manager.py    # Project phase CRUD (name, start_date, end_date)
 ├── calendar_utils.py    # ISO week enumeration; CW-to-date mapping; display labels
 ├── config_store.py      # Load/save config.json (dependencies, clusters, phases)
-└── requirements.txt     # openpyxl, flask
+└── requirements.txt     # openpyxl, flask, requests
 
 frontend/
 ├── index.html           # Single-page dashboard shell

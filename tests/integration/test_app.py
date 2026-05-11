@@ -694,3 +694,41 @@ class TestPutPhases:
         data = client.get("/api/dashboard").get_json()
         assert any(p["name"] == "Launch" for p in data["phases"])
         assert not any(p["name"] == "Go-Live" for p in data["phases"])
+
+
+# ---------------------------------------------------------------------------
+# last_loaded timestamp  (T068 / FR-025)
+# ---------------------------------------------------------------------------
+
+class TestLastLoaded:
+    def test_dashboard_has_last_loaded(self, client):
+        data = client.get("/api/dashboard").get_json()
+        assert "last_loaded" in data
+
+    def test_last_loaded_is_iso_datetime_string(self, client):
+        from datetime import datetime
+        data = client.get("/api/dashboard").get_json()
+        ll = data["last_loaded"]
+        assert isinstance(ll, str)
+        dt = datetime.strptime(ll, "%Y-%m-%dT%H:%M:%S")
+        assert dt is not None
+
+    def test_refresh_includes_last_loaded(self, client):
+        rv = client.post("/api/refresh")
+        assert rv.status_code == 200
+        data = rv.get_json()
+        assert "last_loaded" in data
+
+    def test_refresh_last_loaded_is_iso_datetime_string(self, client):
+        from datetime import datetime
+        rv = client.post("/api/refresh")
+        ll = rv.get_json()["last_loaded"]
+        dt = datetime.strptime(ll, "%Y-%m-%dT%H:%M:%S")
+        assert dt is not None
+
+    def test_refresh_last_loaded_not_earlier_than_initial(self, client):
+        data1 = client.get("/api/dashboard").get_json()
+        ll1 = data1["last_loaded"]
+        data2 = client.post("/api/refresh").get_json()
+        ll2 = data2["last_loaded"]
+        assert ll2 >= ll1

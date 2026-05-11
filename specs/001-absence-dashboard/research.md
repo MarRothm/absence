@@ -239,6 +239,31 @@ confirms success (FR-023).
 
 ---
 
+## Decision 13: SharePoint URL Download
+
+**Decision**: Detect URL by `http://`/`https://` scheme prefix; append `?download=1` to the share
+URL and fetch the file with `requests.get()` (anonymous, no auth headers); write the response body
+to a `tempfile.NamedTemporaryFile` and pass that path to `openpyxl.load_workbook()`.
+
+**Rationale**: SharePoint "anyone with the link" share URLs (e.g.,
+`https://company.sharepoint.com/:x:/s/site/...`) redirect to the file content when `?download=1`
+is appended. `requests` follows redirects by default. Writing to a temp file avoids holding the
+entire response in memory and reuses the existing `openpyxl.load_workbook(filepath)` call
+unchanged. The temp file is deleted after parsing completes. On refresh, `data_fetcher.py` re-runs
+the fetch so the latest version of the file is always used.
+
+**Error handling**: If `requests.get()` raises `ConnectionError` or returns a non-2xx status, the
+application exits with a clear error message at startup (same path as a missing local file per
+FR-016). On refresh, the error is returned as a 500 response (same as a local file read failure).
+
+**Alternatives considered**:
+- *`urllib.request`*: Stdlib, but does not follow all redirect chains reliably for SharePoint CDN
+  URLs; less ergonomic error handling.
+- *`sharepoint` / `Office365-REST-Python-Client`*: Requires authentication setup; not appropriate
+  for anonymous public shares and adds large dependency chain.
+
+---
+
 ## Decision 11: Weekday Label Single-Character Revert
 
 **Decision**: Day sub-column headers use `["M", "T", "W", "T", "F"]` (single characters),

@@ -9,6 +9,11 @@
 
 ### Session 2026-05-11
 
+- Q: Should the SharePoint URL be an alternative data source alongside local file, or replace it? → A: Both supported — CLI accepts either a local file path or a SharePoint URL; app detects which is provided at startup.
+- Q: What authentication method should the app use for SharePoint? → A: Anonymous / public — the SharePoint link is an "anyone with the link" public share; no credentials needed.
+- Q: What timestamp should "date and time of the data" show on the dashboard? → A: Last loaded/refreshed time — the moment the app last successfully read and processed the data.
+- Q: Where should the last-loaded timestamp appear? → A: Fixed header bar, top-right corner — always visible above the timeline regardless of scroll position.
+- Q: What type of SharePoint URL will the manager provide? → A: SharePoint share URL — app automatically converts it to a direct download URL (appending `?download=1` or equivalent).
 - Q: What UI interaction pattern should editing use across all three management panels (dependencies, phases, clusters)? → A: Inline row expansion — clicking Edit transforms the list item into editable fields directly in place; no modal or side panel.
 - Q: For dependency editing, which endpoints are editable? → A: Both the "from" and "to" person dropdowns are editable in place; saving atomically replaces the old dependency.
 - Q: For cluster editing, what fields are editable? → A: Both the cluster name (text field) and its member list (multi-select) are editable inline.
@@ -329,7 +334,7 @@ colors are unchanged.
   definitions across refreshes.
 - **FR-013**: The system MUST skip malformed or incomplete absence rows and surface a summary
   of skipped entries to the user.
-- **FR-016**: The system MUST accept the path to the Excel file as a required command-line argument at startup (e.g. `python app.py absences.xlsx`). If the argument is missing or the file is not found, the application MUST exit with a clear error message before starting the server.
+- **FR-016**: The system MUST accept either a local `.xlsx` file path or a SharePoint "anyone with the link" share URL as the required command-line argument at startup (e.g. `python app.py absences.xlsx` or `python app.py https://company.sharepoint.com/...`). The app distinguishes between the two by detecting an `http://` or `https://` scheme. If the argument is missing, the local file is not found, or the SharePoint URL is unreachable, the application MUST exit with a clear error message before starting the server.
 - **FR-014**: The system MUST display an empty-state message when no rows in the Excel file
   are marked for "Projekt Migration".
 - **FR-015**: Dependencies and skill cluster assignments MUST only reference project member
@@ -356,6 +361,15 @@ colors are unchanged.
   date is before start date, cluster or phase name duplicates an existing one), the edit row
   MUST remain open and display an inline error message below the affected field(s); no persisted
   data is modified.
+- **FR-024**: When a SharePoint URL is provided as the CLI argument, the system MUST convert it
+  to a direct download URL (by appending `?download=1` or equivalent SharePoint download
+  parameter) and fetch the `.xlsx` file via an anonymous HTTP GET request using the `requests`
+  library. No authentication headers or credentials are required. On refresh, the app MUST
+  re-fetch from the SharePoint URL to pick up the latest version of the file.
+- **FR-025**: The dashboard MUST display the date and time the Excel data was last successfully
+  loaded or refreshed in the fixed header bar, top-right corner, using the format
+  `"Last loaded: D Mon YYYY, HH:MM"` (e.g., `"Last loaded: 11 May 2026, 14:32"`). This
+  timestamp MUST update immediately after every successful data refresh.
 
 ### Key Entities
 
@@ -412,9 +426,12 @@ colors are unchanged.
   Column C (header "Projekt Migration") marks project members with "x". Absence is encoded as a marked value in the per-day cell of a person's row — not as
   start/end date pairs. The cell value that denotes absence is "x" (case-insensitive); any other value or empty cell means present.
 - The dashboard is delivered as a local web application: the manager runs a start command with
-  the Excel file path as a required argument (e.g. `python app.py absences.xlsx`) and accesses
-  the dashboard at `localhost:<PORT>` in a standard desktop browser. Mobile optimization and
-  remote hosting are out of scope for v1.
+  either a local Excel file path or a SharePoint "anyone with the link" share URL as the required
+  argument (e.g. `python app.py absences.xlsx` or `python app.py https://...`) and accesses the
+  dashboard at `localhost:<PORT>` in a standard desktop browser. Mobile optimization and remote
+  hosting are out of scope for v1. SharePoint URLs must be public shares requiring no authentication;
+  the app detects a URL by its `http://` or `https://` scheme and converts it to a direct download
+  link automatically.
 - Calendar weeks follow ISO 8601 week numbering (week starts on Monday).
 - "Rest of the year" means from the current calendar week through the last week of calendar
   year 2026.
@@ -436,6 +453,7 @@ colors are unchanged.
 
 - **Language**: Python (3.10+).
 - **Excel parsing**: `openpyxl` library; input files must be `.xlsx` format.
+- **HTTP fetching**: `requests` library; used to download the Excel file from a SharePoint public share URL when a URL is provided instead of a local path.
 - **Web server**: Flask or FastAPI (decision deferred to planning); serves the dashboard at `localhost:<PORT>`.
 - **Frontend**: Browser-based; rendered in a standard desktop browser with no mobile optimization required for v1.
 - **Packaging**: No containerisation required for v1; the manager runs the app directly via Python.

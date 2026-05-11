@@ -47,9 +47,14 @@ Returns the complete data needed to render the dashboard. Called on page load an
   ],
   "skipped_rows": [
     { "row": 7, "reason": "Missing end date" }
-  ]
+  ],
+  "last_loaded": "2026-05-11T14:32:00"
 }
 ```
+
+`last_loaded` is an ISO 8601 datetime string (`YYYY-MM-DDTHH:MM:SS`) recording the moment the
+server last successfully parsed the Excel data. The frontend renders it in the fixed header bar,
+top-right, as `"Last loaded: D Mon YYYY, HH:MM"` (e.g., `"Last loaded: 11 May 2026, 14:32"`).
 
 ---
 
@@ -60,7 +65,8 @@ removes references to names no longer in the filtered Excel data.
 
 **Request body**: none
 
-**Response 200**: Same schema as `GET /api/dashboard`, plus:
+**Response 200**: Same schema as `GET /api/dashboard` (including an updated `last_loaded`
+timestamp), plus:
 
 ```json
 {

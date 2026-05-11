@@ -5,7 +5,7 @@
 
 **Format**: `[ID] [P?] [Story] Description with file path`
 - **[P]**: Can run in parallel (different files, no unmet dependencies)
-- **[Story]**: User story this task belongs to (US1–US5; omitted for Setup/Foundational/Polish)
+- **[Story]**: User story this task belongs to (US1–US6; omitted for Setup/Foundational/Polish)
 - **TDD is NON-NEGOTIABLE** (Constitution Principle II): every logic module has its test written
   and confirmed failing before implementation begins
 
@@ -273,6 +273,40 @@ cycle-creating dependency edit and verify inline error appears without saving.
 
 ---
 
+---
+
+## Phase 12: SharePoint Data Source & Last-Loaded Timestamp (FR-024 / FR-025)
+
+**Goal**: The CLI argument accepts either a local `.xlsx` path or a public SharePoint share URL.
+The dashboard fixed header bar shows the date and time the data was last successfully loaded,
+updating on every successful refresh.
+
+**Independent Test**: Start app with a SharePoint share URL; verify dashboard loads and timeline
+renders identically to the local-file path. Click Reload; verify `last_loaded` timestamp in the
+top-right header updates. Provide an invalid SharePoint URL at startup; verify the app exits with
+a clear error message before the server starts.
+
+### Tests for Phase 12
+
+- [x] T067 [P] Write failing unit tests for `absence_dashboard/data_fetcher.py` in `tests/unit/test_data_fetcher.py`: (a) input without `http://`/`https://` prefix returns local path unchanged; (b) input starting with `https://` triggers URL branch; (c) `?download=1` is appended to the SharePoint URL before `requests.get()`; (d) `requests.get()` is called with no auth headers; (e) non-2xx response raises `ConnectionError` with a descriptive message; (f) response content is written to a temp `.xlsx` file; (g) temp file is cleaned up after `openpyxl.load_workbook()` succeeds
+- [x] T068 [P] Write failing integration tests for `last_loaded` field in `tests/integration/test_app.py`: (a) `GET /api/dashboard` response contains `last_loaded` in `"YYYY-MM-DDTHH:MM:SS"` ISO format; (b) `POST /api/refresh` response contains a `last_loaded` value that is ≥ the initial value from GET; (c) `last_loaded` value in response is parseable as a `datetime` object
+
+### Implementation for Phase 12
+
+- [x] T069 Update `absence_dashboard/requirements.txt` to add `requests>=2.28` (FR-024 — needed for SharePoint anonymous HTTP download)
+- [x] T070 Implement `absence_dashboard/data_fetcher.py`: `get_workbook(source: str) → Workbook` — if `source` starts with `http://` or `https://`: call `requests.get(source + "?download=1", timeout=30)`, raise `ConnectionError` on non-2xx status, write `response.content` to `tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)`, call `openpyxl.load_workbook(tmp_path)`, delete temp file, return workbook; else: call `openpyxl.load_workbook(source)` directly — confirm T067 now passes
+- [x] T071 Update `absence_dashboard/app.py` startup to use `data_fetcher.get_workbook(source)` in place of all direct `openpyxl.load_workbook()` calls; store the original `source` string at module level so `POST /api/refresh` can re-call `data_fetcher.get_workbook(source)` to re-fetch from SharePoint on each reload; extend startup error handling to catch `ConnectionError` from `data_fetcher` and exit with a clear message (FR-016 extended)
+- [x] T072 Update `GET /api/dashboard` and `POST /api/refresh` routes in `absence_dashboard/app.py`: record `last_loaded = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")` as a module-level variable set on every successful data load; include `last_loaded` in both route responses — confirm T068 now passes
+- [x] T073 [P] Update `absence_dashboard/static/index.html`: add `<span id="last-loaded"></span>` inside the existing fixed header bar at the top-right corner (FR-025 — always visible above the scrolling timeline)
+- [x] T074 [P] Update `absence_dashboard/static/style.css`: add styles for `#last-loaded` — right-aligned within the fixed header, subdued text color, `font-size: 0.85em`; ensure fixed header has `position: sticky; top: 0; z-index: 100;` so it remains visible while the timeline scrolls horizontally
+- [x] T075 Update `absence_dashboard/static/main.js` `fetchDashboard()` and the `POST /api/refresh` handler: after each successful API response, read `data.last_loaded` and write it to `document.getElementById("last-loaded").textContent` formatted as `"Last loaded: D Mon YYYY, HH:MM"` — parse ISO string `"YYYY-MM-DDTHH:MM:SS"` and format using `toLocaleDateString("en-GB", {day:"numeric",month:"short",year:"numeric"})` + hours/minutes extracted from the time component (e.g., `"Last loaded: 11 May 2026, 14:32"`)
+- [x] T076 Run end-to-end validation: (a) start app with local `.xlsx` — verify `last_loaded` appears in header; (b) click Reload — verify timestamp updates; (c) start app with a valid SharePoint public share URL — verify dashboard loads and timestamp shown; (d) start app with an invalid URL — verify clear error message before server starts; (e) run `pytest tests/ -v` and confirm all tests green
+
+**Checkpoint**: SharePoint URL accepted at startup and on refresh. Last-loaded timestamp visible
+in header top-right, updating on every successful data load.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -371,4 +405,4 @@ Phase 5 (US3) starts only after Phase 4 completes.
 - Commit after each phase checkpoint passes
 - `state/state.json` is created automatically on first run; delete it to reset all config
 - `tests/conftest.py` `sample_workbook` fixture must exactly mirror confirmed grid layout: Col C filter, Col D name, Col F+ dates starting 2026-04-27
-- Total tasks: **66** (T001–T054 complete ✅; T055–T066 added 2026-05-11 — inline edit for dependencies, clusters, and phases per FR-022/FR-023)
+- Total tasks: **76** (T001–T066 complete ✅; T067–T076 added 2026-05-11 — SharePoint URL data source and last-loaded timestamp per FR-024/FR-025)

@@ -51,20 +51,26 @@ python3 --version
 
 ## Running the Dashboard
 
-```bash
-./run.sh path/to/absences.xlsx
-```
-
-Or directly:
+**Option A — local Excel file**:
 
 ```bash
 python app.py path/to/absences.xlsx
 ```
 
+**Option B — SharePoint public share URL** (the link must be an "anyone with the link" share):
+
+```bash
+python app.py "https://company.sharepoint.com/:x:/s/yoursite/ExxxxxxxxxxxxxxQ?e=xxxxxx"
+```
+
+The app detects the input type by its `http://`/`https://` scheme. For a SharePoint URL it
+appends `?download=1` and downloads the file anonymously before parsing.
+
 Open your browser and navigate to: **http://localhost:5000**
 
 The dashboard loads immediately. If the "Projekt Migration" column is present, only marked
-members are shown.
+members are shown. The **last loaded date and time** is shown in the top-right corner of the
+header (e.g., `"Last loaded: 11 May 2026, 14:32"`) and updates on every successful refresh.
 
 ---
 
@@ -104,8 +110,10 @@ are colored; a person absent Mon–Wed in CW23 shows 3 colored cells, leaving Th
 
 ### Refreshing Data
 
-Click the **"Reload"** button (top right) to re-read the Excel file. All dependencies and skill
-clusters you have defined are preserved.
+Click the **"Reload"** button (top right) to re-read the Excel file (or re-fetch it from the
+SharePoint URL if that was the startup source). All dependencies and skill clusters you have
+defined are preserved. The **"Last loaded"** timestamp in the header updates to the current time
+on every successful refresh.
 
 ### Managing Dependencies
 
@@ -149,6 +157,7 @@ before implementation and passing after.
 |---------|-------------|-----|
 | "No project members found" | No rows with "x" in "Projekt Migration" column | Verify column name and "x" values in the Excel file |
 | "Cannot read Excel file" | Wrong file path or file open in Excel | Close Excel and verify the path |
+| "Cannot download from SharePoint URL" | URL is not a public share or network is unavailable | Verify the link is "anyone with the link" and accessible in a browser without login |
 | Skipped rows warning | Missing or malformed dates in some rows | Review flagged rows in the Excel file |
 | Port 5000 already in use | Another process using port 5000 | Run `python app.py path/to/file.xlsx --port 5001` |
 | "Column C/D not found" | Excel file has fewer columns than expected | Verify the file is the correct `.xlsx` and has data in columns C, D, and F+ |
