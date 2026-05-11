@@ -96,7 +96,11 @@ are colored; a person absent Mon–Wed in CW23 shows 3 colored cells, leaving Th
 4. Each defined phase appears as a labelled horizontal banner row above all member rows in the
    timeline, spanning its exact date range. Multiple phases with overlapping dates stack as
    separate rows.
-5. To remove a phase, click ✕ next to its name in the list.
+5. To edit a phase, click **"Edit"** next to it — the row expands inline with the name, start
+   date, and end date all editable. Click **"Save"** to apply or **"Cancel"** to discard. If the
+   new end date is before the start date, or the name duplicates an existing phase, an error
+   appears inline and the row stays open.
+6. To remove a phase, click ✕ next to its name in the list.
 
 ### Refreshing Data
 
@@ -108,14 +112,21 @@ clusters you have defined are preserved.
 1. Click **"Dependencies"** in the top navigation.
 2. Select a **"From"** member (the at-risk person) and a **"To"** member (the person depended on).
 3. Click **"Add Dependency"**.
-4. To remove, click the ✕ next to any existing dependency in the list.
+4. To edit a dependency, click **"Edit"** next to it — the row expands inline with both the
+   "From" and "To" dropdowns editable. Click **"Save"** to apply or **"Cancel"** to discard. If
+   the change would create a cycle or duplicate an existing dependency, an error appears inline and
+   the row stays open.
+5. To remove, click the ✕ next to any existing dependency in the list.
 
 ### Managing Skill Clusters
 
 1. Click **"Clusters"** in the top navigation.
 2. Enter a cluster name and select member(s) from the dropdown.
 3. Click **"Create Cluster"**.
-4. To edit members, use the **+/−** buttons next to each cluster.
+4. To edit a cluster, click **"Edit"** next to it — the row expands inline with both the cluster
+   name (text field) and its member list (multi-select) editable. Click **"Save"** to apply or
+   **"Cancel"** to discard. If the new name duplicates an existing cluster, or a selected member
+   is not in the loaded dataset, an error appears inline and the row stays open.
 5. To delete a cluster, click **"Delete"** next to the cluster name.
 
 ---

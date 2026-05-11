@@ -1,16 +1,18 @@
 # Implementation Plan: Absence Management Dashboard
 
-**Branch**: `001-absence-dashboard` | **Date**: 2026-05-08 | **Spec**: [spec.md](./spec.md)
+**Branch**: `001-absence-dashboard` | **Date**: 2026-05-11 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `specs/001-absence-dashboard/spec.md`
 
 ## Summary
 
 Build a local Python web application that reads a date-grid `.xlsx` spreadsheet, visualises
 planned absences per project member as a Gantt-style day-level timeline for the remainder of the
-year, and lets the manager define dependencies, skill clusters, and named project phases in the
-browser UI. Technical approach: Flask + openpyxl backend; vanilla HTML/CSS/JS frontend; local
-`config.json` for UI config persistence. Day sub-columns display single-character weekday labels
-(M/T/W/T/F). Project phases render as horizontal banner rows above member rows.
+year, and lets the manager define, edit, and remove dependencies, skill clusters, and named project
+phases in the browser UI. All three management panels use an inline row-expansion edit pattern with
+Save/Cancel buttons (FR-022/FR-023); no modal overlays. Technical approach: Flask + openpyxl
+backend; vanilla HTML/CSS/JS frontend; local `state/state.json` for UI config persistence. Day
+sub-columns display single-character weekday labels (M/T/W/T/F). Project phases render as
+horizontal banner rows above member rows.
 
 ## Technical Context
 
@@ -45,8 +47,9 @@ names, cluster assignments, and phase date ranges — no sensitive personal data
 Tracking.
 
 ### Principle V — Simplicity & Maintainability
-**PASS** — Stack unchanged: Python stdlib + openpyxl + Flask + vanilla JS. Project phases
-follow the same CRUD pattern as clusters; no new abstractions introduced.
+**PASS** — Stack unchanged: Python stdlib + openpyxl + Flask + vanilla JS. Inline edit follows
+the same row-expansion pattern for all three panels; no new abstractions. Edit is handled via
+existing PUT endpoints (extended to support renaming) plus one new PUT /api/dependencies endpoint.
 
 ## Project Structure
 
@@ -85,9 +88,9 @@ frontend/
 │   └── dashboard.css    # Gantt grid layout; absence/risk/bottleneck/phase styling
 └── js/
     ├── dashboard.js     # Gantt table render; phase banner rows; absence/at-risk/bottleneck
-    ├── dependencies.js  # Add/remove dependency UI panel
-    ├── clusters.js      # Add/view/remove skill-cluster UI panel
-    └── phases.js        # Add/view/remove project phase UI panel
+    ├── dependencies.js  # Add/edit/remove dependency UI panel (inline row-expansion)
+    ├── clusters.js      # Add/edit/remove skill-cluster UI panel (inline row-expansion)
+    └── phases.js        # Add/edit/remove project phase UI panel (inline row-expansion)
 
 tests/
 ├── test_excel_reader.py

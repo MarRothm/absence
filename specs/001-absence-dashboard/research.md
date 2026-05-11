@@ -206,6 +206,39 @@ scroll/resize); dedicated header section (adds layout complexity when phase coun
 
 ---
 
+## Decision 12: Inline Edit UX Pattern for Management Panels
+
+**Decision**: Inline row-expansion — clicking an Edit button on an existing dependency, cluster,
+or phase expands that list row into editable fields in place, with explicit Save and Cancel buttons.
+
+**Rationale**: Keeps the user in context (no focus shift to a modal), is the lightest DOM
+manipulation (toggle a CSS class to expand/collapse), and unifies edit behaviour across all three
+panels with one reusable pattern. Explicit Save/Cancel makes the commit boundary clear, which is
+important given that Save triggers server-side validation (cycle detection, date range, duplicate
+name) and may return an inline error that the user needs to correct without losing their edits.
+
+**Validation on Save**: If the API returns a 4xx error, the edit row stays open and the error
+message is displayed inline below the affected field(s). No data is modified until the server
+confirms success (FR-023).
+
+**API mapping**:
+- Dependencies: new `PUT /api/dependencies` — sends old and new (from, to) pairs; atomically
+  replaces the dependency, re-runs cycle detection.
+- Clusters: extended `PUT /api/clusters/{name}` — now accepts optional `new_name` in addition to
+  `members`; handles rename atomically.
+- Phases: new `PUT /api/phases/{name}` — sends new name, start_date, end_date; validates dates
+  and uniqueness.
+
+**Alternatives considered**:
+- *Modal/dialog*: More visual interruption; requires focus management and overlay CSS. No benefit
+  over inline expansion for small forms with 1–3 fields.
+- *Side panel*: More complex layout coordination (panel + list must stay in sync); overkill for
+  forms this simple.
+- *Auto-save on blur*: Eliminates the discard path; makes validation error recovery awkward when
+  the user clicks away mid-edit.
+
+---
+
 ## Decision 11: Weekday Label Single-Character Revert
 
 **Decision**: Day sub-column headers use `["M", "T", "W", "T", "F"]` (single characters),

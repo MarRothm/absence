@@ -8,7 +8,7 @@ from absence_dashboard.parser import parse_members
 from absence_dashboard.merger import merge_periods
 from absence_dashboard.state import load_state, save_state, AppState
 from absence_dashboard.graph import DependencyGraph, CycleError
-from absence_dashboard.phases_manager import add_phase, remove_phase
+from absence_dashboard.phases_manager import add_phase, remove_phase, update_phase
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +232,43 @@ def create_app(excel_path: str, state_path: str = "state/state.json") -> Flask:
         return jsonify({"dependencies": state.dependencies}), 201
 
     # ------------------------------------------------------------------
+    # PUT /api/dependencies
+    # ------------------------------------------------------------------
+
+    @app.route("/api/dependencies", methods=["PUT"])
+    def put_dependency():
+        body = request.get_json(silent=True) or {}
+        old_from = body.get("old_from", "")
+        old_to = body.get("old_to", "")
+        new_from = body.get("new_from", "")
+        new_to = body.get("new_to", "")
+        valid_names = {m.name for m in app.config["MEMBERS"]}
+        state = app.config["STATE"]
+
+        if new_from not in valid_names or new_to not in valid_names:
+            return jsonify({"error": f"Invalid member name"}), 400
+
+        old_pair = {"from_member": old_from, "to_member": old_to}
+        if old_pair not in state.dependencies:
+            return jsonify({"error": "Dependency not found"}), 404
+
+        remaining = [d for d in state.dependencies if d != old_pair]
+        graph = DependencyGraph(remaining)
+        try:
+            graph.add_edge(new_from, new_to, valid_names)
+        except CycleError as e:
+            return jsonify({"error": str(e)}), 409
+        except ValueError as e:
+            msg = str(e)
+            if "already exists" in msg:
+                return jsonify({"error": msg}), 409
+            return jsonify({"error": msg}), 400
+
+        state.dependencies = graph.edges()
+        save_state(state, app.config["STATE_PATH"])
+        return jsonify({"dependencies": state.dependencies})
+
+    # ------------------------------------------------------------------
     # DELETE /api/dependencies
     # ------------------------------------------------------------------
 
@@ -287,16 +324,22 @@ def create_app(excel_path: str, state_path: str = "state/state.json") -> Flask:
     @app.route("/api/clusters/<cluster_name>", methods=["PUT"])
     def put_cluster(cluster_name):
         body = request.get_json(silent=True) or {}
-        members_list = body.get("members", [])
+        new_name = body.get("name")
+        members_list = body.get("members")
         valid_names = {m.name for m in app.config["MEMBERS"]}
         state = app.config["STATE"]
         cluster = next((c for c in state.clusters if c["name"] == cluster_name), None)
         if cluster is None:
             return jsonify({"error": f"Cluster '{cluster_name}' not found."}), 404
-        for m in members_list:
-            if m not in valid_names:
-                return jsonify({"error": f"Member '{m}' not in loaded dataset."}), 400
-        cluster["members"] = list(members_list)
+        if new_name is not None and new_name != cluster_name:
+            if any(c["name"] == new_name for c in state.clusters):
+                return jsonify({"error": f"Cluster name already exists"}), 400
+            cluster["name"] = new_name
+        if members_list is not None:
+            for m in members_list:
+                if m not in valid_names:
+                    return jsonify({"error": f"Member '{m}' not in loaded dataset."}), 400
+            cluster["members"] = list(members_list)
         save_state(state, app.config["STATE_PATH"])
         return jsonify({"clusters": state.clusters})
 
@@ -339,6 +382,29 @@ def create_app(excel_path: str, state_path: str = "state/state.json") -> Flask:
             return jsonify({"error": str(e)}), 400
         save_state(state, app.config["STATE_PATH"])
         return jsonify({"phases": state.phases}), 201
+
+    # ------------------------------------------------------------------
+    # PUT /api/phases/<phase_name>
+    # ------------------------------------------------------------------
+
+    @app.route("/api/phases/<path:phase_name>", methods=["PUT"])
+    def put_phase(phase_name):
+        body = request.get_json(silent=True) or {}
+        new_name = body.get("name")
+        start_date = body.get("start_date")
+        end_date = body.get("end_date")
+        state = app.config["STATE"]
+        try:
+            state.phases = update_phase(
+                phase_name, state.phases,
+                new_name=new_name, start_date=start_date, end_date=end_date,
+            )
+        except KeyError:
+            return jsonify({"error": f"Phase '{phase_name}' not found."}), 404
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        save_state(state, app.config["STATE_PATH"])
+        return jsonify({"phases": state.phases})
 
     # ------------------------------------------------------------------
     # DELETE /api/phases/<phase_name>

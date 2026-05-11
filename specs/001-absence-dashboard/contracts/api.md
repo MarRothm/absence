@@ -127,6 +127,48 @@ adding the dependency would not create a cycle.
 
 ---
 
+## PUT /api/dependencies
+
+Atomically replaces an existing dependency. Identifies the original by `old_from`/`old_to` and
+replaces it with `new_from`/`new_to`. Runs cycle detection on the resulting graph before saving.
+
+**Request body**:
+
+```json
+{
+  "old_from": "Alice Müller", "old_to": "Bob Schmidt",
+  "new_from": "Alice Müller", "new_to": "Carol Bauer"
+}
+```
+
+**Response 200**: Updated dependency list (same schema as GET /api/dependencies).
+
+**Response 400** — validation error:
+
+```json
+{ "error": "Invalid member name", "detail": "'Unknown Person' not in loaded dataset" }
+```
+
+**Response 404** — original dependency not found:
+
+```json
+{ "error": "Dependency not found" }
+```
+
+**Response 409** — cycle detected:
+
+```json
+{ "error": "Cycle detected", "cycle_path": ["Alice Müller", "Carol Bauer", "Alice Müller"] }
+```
+
+**Response 409** — duplicate:
+
+```json
+{ "error": "Dependency already exists" }
+```
+
+---
+
 ## DELETE /api/dependencies
 
 Removes a single dependency.
@@ -191,24 +233,34 @@ Creates a new skill cluster.
 
 ## PUT /api/clusters/{cluster_name}
 
-Updates an existing cluster's member list. The cluster name in the URL is the current name;
-to rename, delete and recreate.
+Updates an existing cluster's name and/or member list. The cluster name in the URL is the current
+name. Both fields are optional; omit `name` to keep the current name.
 
 **Request body**:
 
 ```json
-{ "members": ["Alice Müller", "Carol Bauer"] }
+{ "name": "Backend Core", "members": ["Alice Müller", "Carol Bauer"] }
 ```
 
 **Response 200**: Updated cluster.
+
+**Response 400** — duplicate name:
+
+```json
+{ "error": "Cluster name already exists" }
+```
+
+**Response 400** — invalid member name:
+
+```json
+{ "error": "Invalid member name", "detail": "'Unknown Person' not in loaded dataset" }
+```
 
 **Response 404**:
 
 ```json
 { "error": "Cluster not found" }
 ```
-
-**Response 400**: Same schema as POST /api/clusters 400 responses.
 
 ---
 
@@ -264,6 +316,39 @@ Creates a new project phase.
 
 ```json
 { "error": "end_date must be >= start_date." }
+```
+
+---
+
+## PUT /api/phases/{phase_name}
+
+Updates an existing phase. The phase name in the URL is the current name. All three fields
+(`name`, `start_date`, `end_date`) are optional; omit any to keep the current value.
+
+**Request body**:
+
+```json
+{ "name": "Go-Live v2", "start_date": "2026-06-22", "end_date": "2026-06-30" }
+```
+
+**Response 200**: Updated phases list (same schema as GET /api/phases).
+
+**Response 400** — duplicate name:
+
+```json
+{ "error": "Phase 'Go-Live v2' already exists." }
+```
+
+**Response 400** — invalid dates:
+
+```json
+{ "error": "end_date must be >= start_date." }
+```
+
+**Response 404**:
+
+```json
+{ "error": "Phase 'Go-Live' not found." }
 ```
 
 ---

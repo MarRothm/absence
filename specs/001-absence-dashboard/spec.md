@@ -7,6 +7,14 @@
 
 ## Clarifications
 
+### Session 2026-05-11
+
+- Q: What UI interaction pattern should editing use across all three management panels (dependencies, phases, clusters)? → A: Inline row expansion — clicking Edit transforms the list item into editable fields directly in place; no modal or side panel.
+- Q: For dependency editing, which endpoints are editable? → A: Both the "from" and "to" person dropdowns are editable in place; saving atomically replaces the old dependency.
+- Q: For cluster editing, what fields are editable? → A: Both the cluster name (text field) and its member list (multi-select) are editable inline.
+- Q: How should an inline edit be committed? → A: Explicit Save and Cancel buttons appear in the expanded row; clicking Save commits the change; Cancel discards it.
+- Q: When Save fails validation (cycle, duplicate name, invalid date range), what happens? → A: The edit row stays open and displays an inline error message below the affected field(s); no data is modified.
+
 ### Session 2026-05-08
 
 - Q: How should a partial-week absence be visually represented in the calendar-week-based timeline? → A: Expand each calendar-week column into 5 sub-columns (Mon–Fri); each day is individually marked as absent or present — exact day-level granularity. A person absent fewer than 5 days in a given week must not appear as fully absent for that week.
@@ -104,8 +112,9 @@ and D. Verify A's and C's rows show "at risk" indicators in the weeks where B an
 
 4. **Given** the dashboard stores dependencies between project members,
    **When** the manager opens the dependency management area in the UI,
-   **Then** they can add, view, and remove dependencies using only names present in the
-   loaded Excel data.
+   **Then** they can add, view, edit, and remove dependencies using only names present in the
+   loaded Excel data; clicking Edit expands the row inline with both "from" and "to" dropdowns
+   editable, and Save/Cancel buttons to commit or discard the change.
 
 ---
 
@@ -170,9 +179,11 @@ are available as substitutes.
    **Then** the member is shown without a cluster label (ungrouped section or "Unassigned").
 
 4. **Given** the manager opens the skill cluster management area in the UI,
-   **When** they define or edit a cluster,
-   **Then** they can add or remove project members using only names present in the loaded Excel
-   data, and the dashboard updates immediately.
+   **When** they edit a cluster,
+   **Then** clicking Edit expands the cluster row inline with the cluster name (text field) and
+   member list (multi-select) both editable; Save commits the change and collapses the row;
+   Cancel discards it; the dashboard updates immediately; only names present in the loaded Excel
+   data are available in the member multi-select.
 
 ---
 
@@ -238,9 +249,11 @@ colors are unchanged.
    the phase banner is the only additional visual element.
 
 4. **Given** the manager opens the project phases UI panel,
-   **When** they define or remove a phase,
-   **Then** they can add a name and a start/end date; the dashboard updates immediately without
-   a page reload; the phase is persisted in config.json.
+   **When** they add, edit, or remove a phase,
+   **Then** they can add a name and a start/end date; clicking Edit on an existing phase expands
+   the row inline with name, start date, and end date all editable; Save commits the change;
+   Cancel discards it; the dashboard updates immediately without a page reload; the phase is
+   persisted in config.json.
 
 ---
 
@@ -279,6 +292,10 @@ colors are unchanged.
   display normally.
 - All members are present during a project phase — the banner row still renders; phase visibility
   is independent of absence data.
+- The manager edits a dependency such that it would create a cycle — the edit row stays open with an inline cycle-detection error; the original dependency is unchanged (extends FR-007 to the edit path).
+- The manager edits a phase with an end date earlier than the start date — the edit row stays open with an inline date-range error; the original phase is unchanged.
+- The manager edits a cluster or phase name to one already used by another cluster or phase — the edit row stays open with an inline duplicate-name error; the original name is unchanged.
+- The manager edits a dependency to an (A→B) pair that already exists — the edit row stays open with an inline duplicate-dependency error; the original is unchanged.
 
 ## Requirements *(mandatory)*
 
@@ -291,19 +308,22 @@ colors are unchanged.
   (case-insensitive) in Column C ("Projekt Migration") are included. All rows sharing the same
   name spelling are treated as a single person.
 - **FR-004**: The system MUST collect all absence periods across every Excel row for a given project member name and merge overlapping or adjacent periods into a single continuous visual block per merged span. A merged absence block MUST render as one unbroken bar across all absent day sub-columns, crossing week-column boundaries without visual interruption (e.g., an absence spanning Thu–Fri of CW22 and Mon–Wed of CW23 is displayed as a single connected bar, not two separate per-week blocks).
-- **FR-005**: The dashboard MUST provide a UI area where the manager can add, view, and remove
-  directed dependencies between project members (A depends on B).
+- **FR-005**: The dashboard MUST provide a UI area where the manager can add, view, edit, and
+  remove directed dependencies between project members (A depends on B). Editing a dependency
+  expands its row inline with both the "from" and "to" person dropdowns editable; saving
+  atomically replaces the old dependency.
 - **FR-006**: The dashboard MUST visually mark a project member's entire calendar-week band (all 5 day sub-columns) with an at-risk indicator for any CW in which at least one day of the depended-on person's absence falls. The at-risk indicator is week-granular: a single absent day in a CW triggers the full-week at-risk highlight on the dependent's row.
 - **FR-007**: The system MUST detect dependency cycles and display a warning; cycle-creating
   dependencies MUST NOT be saved.
 - **FR-008**: The system MUST automatically mark project members who are listed as a dependency
   by two or more other project members with a distinct bottleneck indicator.
-- **FR-009**: The dashboard MUST provide a UI area where the manager can define named skill
-  clusters and assign project members to them.
+- **FR-009**: The dashboard MUST provide a UI area where the manager can add, edit, and remove
+  named skill clusters and assign project members to them. Editing a cluster expands its row
+  inline with both the cluster name (text field) and its member list (multi-select) editable.
 - **FR-010**: The dashboard MUST display project members organized by their skill cluster;
   members not assigned to any cluster MUST appear in an "Unassigned" group.
-- **FR-011**: Skill cluster and dependency changes in the UI MUST take effect on the timeline
-  immediately without a page reload.
+- **FR-011**: Skill cluster, dependency, and phase additions, edits, and removals in the UI MUST
+  take effect on the timeline immediately without a page reload.
 - **FR-012**: The system MUST allow the dashboard to be refreshed to reflect changes in the
   Excel file without a full restart, preserving all UI-defined dependencies and cluster
   definitions across refreshes.
@@ -314,9 +334,10 @@ colors are unchanged.
   are marked for "Projekt Migration".
 - **FR-015**: Dependencies and skill cluster assignments MUST only reference project member
   names present in the currently loaded Excel dataset.
-- **FR-017**: The dashboard MUST provide a UI panel where the manager can add, view, and remove
-  named project phases. Each phase has a name (non-empty string) and a start and end date
-  (inclusive; end ≥ start).
+- **FR-017**: The dashboard MUST provide a UI panel where the manager can add, view, edit, and
+  remove named project phases. Each phase has a name (non-empty string) and a start and end date
+  (inclusive; end ≥ start). Editing a phase expands its row inline with all three fields
+  (name, start date, end date) editable.
 - **FR-018**: Each project phase MUST be rendered as a horizontal banner row above all member
   rows in the timeline, spanning the exact day-columns covered by the phase's start and end dates.
   If a phase extends beyond the visible timeline range, only the visible portion is rendered.
@@ -325,8 +346,16 @@ colors are unchanged.
   overlapping phases occurs.
 - **FR-020**: Project phases MUST be persisted in `config.json` alongside dependencies and skill
   clusters, and MUST survive dashboard refreshes.
-- **FR-021**: Adding or removing a project phase in the UI MUST take effect immediately without
-  a page reload.
+- **FR-021**: Adding, editing, or removing a project phase in the UI MUST take effect immediately
+  without a page reload.
+- **FR-022**: All three management panels (dependencies, phases, skill clusters) MUST use a
+  consistent inline row-expansion pattern for editing: clicking an Edit control on an existing
+  item expands that row into editable fields in place; explicit Save and Cancel buttons appear
+  within the expanded row; Save commits and collapses, Cancel discards and collapses.
+- **FR-023**: When an inline Save fails validation (dependency would create a cycle, phase end
+  date is before start date, cluster or phase name duplicates an existing one), the edit row
+  MUST remain open and display an inline error message below the affected field(s); no persisted
+  data is modified.
 
 ### Key Entities
 
@@ -365,8 +394,8 @@ colors are unchanged.
   the end of the current year, with no weeks missing or duplicated.
 - **SC-005**: Refreshing the dashboard after an Excel update reflects the new data within 5 seconds,
   with all previously defined dependencies and cluster assignments intact.
-- **SC-006**: Adding or removing a dependency or cluster assignment in the UI takes effect on
-  the timeline immediately, with no page reload required.
+- **SC-006**: Adding, editing, or removing a dependency, cluster, or phase in the UI takes effect
+  on the timeline immediately, with no page reload required.
 - **SC-007**: Bottleneck members are visually distinguishable from non-bottleneck members at a
   glance without the manager needing to count dependencies manually.
 - **SC-008**: Skill cluster groupings in the dashboard layout immediately reveal whether a

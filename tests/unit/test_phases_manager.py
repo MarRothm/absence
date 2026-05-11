@@ -3,7 +3,7 @@ Unit tests for absence_dashboard/phases_manager.py.
 TDD: Written BEFORE implementation; confirmed failing before phases_manager.py is complete.
 """
 import pytest
-from absence_dashboard.phases_manager import add_phase, remove_phase
+from absence_dashboard.phases_manager import add_phase, remove_phase, update_phase
 
 
 class TestAddPhase:
@@ -73,3 +73,68 @@ class TestRemovePhase:
         original = [{"name": "Go-Live", "start_date": "2026-06-22", "end_date": "2026-06-26"}]
         remove_phase("Go-Live", original)
         assert len(original) == 1
+
+
+class TestUpdatePhase:
+    _existing = [
+        {"name": "Go-Live", "start_date": "2026-06-22", "end_date": "2026-06-26"},
+        {"name": "Sprint 10", "start_date": "2026-06-15", "end_date": "2026-06-21"},
+    ]
+
+    def test_rename_only(self):
+        result = update_phase("Go-Live", new_name="Launch", phases=list(self._existing))
+        names = {p["name"] for p in result}
+        assert "Launch" in names
+        assert "Go-Live" not in names
+
+    def test_rename_preserves_dates(self):
+        result = update_phase("Go-Live", new_name="Launch", phases=list(self._existing))
+        launch = next(p for p in result if p["name"] == "Launch")
+        assert launch["start_date"] == "2026-06-22"
+        assert launch["end_date"] == "2026-06-26"
+
+    def test_update_dates_only(self):
+        result = update_phase("Go-Live", start_date="2026-06-23", end_date="2026-06-27",
+                              phases=list(self._existing))
+        go_live = next(p for p in result if p["name"] == "Go-Live")
+        assert go_live["start_date"] == "2026-06-23"
+        assert go_live["end_date"] == "2026-06-27"
+
+    def test_update_dates_preserves_name(self):
+        result = update_phase("Go-Live", start_date="2026-06-23", end_date="2026-06-27",
+                              phases=list(self._existing))
+        names = {p["name"] for p in result}
+        assert "Go-Live" in names
+
+    def test_update_all_fields(self):
+        result = update_phase("Go-Live", new_name="Launch", start_date="2026-07-01",
+                              end_date="2026-07-05", phases=list(self._existing))
+        launch = next(p for p in result if p["name"] == "Launch")
+        assert launch["start_date"] == "2026-07-01"
+        assert launch["end_date"] == "2026-07-05"
+
+    def test_rename_to_same_name_is_ok(self):
+        result = update_phase("Go-Live", new_name="Go-Live", phases=list(self._existing))
+        assert any(p["name"] == "Go-Live" for p in result)
+
+    def test_rename_to_existing_other_name_raises(self):
+        with pytest.raises(ValueError, match="already exists"):
+            update_phase("Go-Live", new_name="Sprint 10", phases=list(self._existing))
+
+    def test_end_before_start_raises(self):
+        with pytest.raises(ValueError, match="end_date"):
+            update_phase("Go-Live", start_date="2026-07-10", end_date="2026-07-05",
+                         phases=list(self._existing))
+
+    def test_unknown_phase_raises_key_error(self):
+        with pytest.raises(KeyError):
+            update_phase("Nonexistent", new_name="X", phases=list(self._existing))
+
+    def test_list_length_unchanged(self):
+        result = update_phase("Go-Live", new_name="Launch", phases=list(self._existing))
+        assert len(result) == len(self._existing)
+
+    def test_original_not_mutated(self):
+        original = [{"name": "Go-Live", "start_date": "2026-06-22", "end_date": "2026-06-26"}]
+        update_phase("Go-Live", new_name="Launch", phases=original)
+        assert original[0]["name"] == "Go-Live"

@@ -355,3 +355,85 @@ body {
 .tg-day-cell.phase-start.phase-end {
   border-radius: 4px;
 }
+
+/* -------------------------------------------------------------------------
+   Inline edit (Phase 11 — FR-022 / FR-023)
+   ------------------------------------------------------------------------- */
+.item-display, .item-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.item-display.hidden, .item-edit.hidden { display: none; }
+
+.item-edit {
+  padding: 4px 0;
+  background: #f0f4ff;
+  border-radius: 4px;
+  padding: 6px 8px;
+  gap: 6px;
+}
+
+.btn-edit {
+  background: none;
+  border: 1px solid #7f8c8d;
+  border-radius: 3px;
+  cursor: pointer;
+  color: #2c3e50;
+  font-size: 11px;
+  padding: 1px 7px;
+}
+.btn-edit:hover { background: #ecf0f1; }
+
+.btn-save {
+  background: #27ae60;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  color: #fff;
+  font-size: 11px;
+  padding: 2px 10px;
+}
+.btn-save:hover { background: #219a52; }
+
+.btn-cancel {
+  background: none;
+  border: 1px solid #bdc3c9;
+  border-radius: 3px;
+  cursor: pointer;
+  color: #7f8c8d;
+  font-size: 11px;
+  padding: 2px 10px;
+}
+.btn-cancel:hover { background: #ecf0f1; }
+
+.edit-input {
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px solid #bdc3c9;
+  border-radius: 3px;
+}
+
+.edit-select {
+  font-size: 12px;
+  padding: 2px 4px;
+  border: 1px solid #bdc3c9;
+  border-radius: 3px;
+}
+
+.edit-select-multi {
+  font-size: 12px;
+  border: 1px solid #bdc3c9;
+  border-radius: 3px;
+  min-height: 60px;
+}
+
+.inline-edit-error {
+  font-size: 11px;
+  color: #c0392b;
+  background: #fdecea;
+  padding: 3px 8px;
+  border-radius: 3px;
+  width: 100%;
+}

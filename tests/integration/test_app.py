@@ -474,3 +474,223 @@ class TestRefreshPreservesPhases:
         client.post("/api/refresh")
         data = client.get("/api/dashboard").get_json()
         assert any(p["name"] == "Go-Live" for p in data["phases"])
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/dependencies  (T056 / Phase 11)
+# ---------------------------------------------------------------------------
+
+class TestPutDependencies:
+    def test_valid_replace_returns_200(self, client):
+        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
+        rv = client.put("/api/dependencies",
+                        json={"old_from": "Alice", "old_to": "Bob",
+                              "new_from": "Alice", "new_to": "Carol"})
+        assert rv.status_code == 200
+
+    def test_valid_replace_updates_list(self, client):
+        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
+        client.put("/api/dependencies",
+                   json={"old_from": "Alice", "old_to": "Bob",
+                         "new_from": "Alice", "new_to": "Carol"})
+        data = client.get("/api/dependencies").get_json()
+        deps = data["dependencies"]
+        assert {"from_member": "Alice", "to_member": "Carol"} in deps
+        assert {"from_member": "Alice", "to_member": "Bob"} not in deps
+
+    def test_old_pair_not_found_returns_404(self, client):
+        rv = client.put("/api/dependencies",
+                        json={"old_from": "Alice", "old_to": "Bob",
+                              "new_from": "Alice", "new_to": "Carol"})
+        assert rv.status_code == 404
+
+    def test_cycle_returns_409(self, client):
+        # Bob→Carol exists; replacing Alice→Bob with Carol→Bob creates Bob→Carol + Carol→Bob cycle
+        client.post("/api/dependencies", json={"from_member": "Bob", "to_member": "Carol"})
+        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
+        rv = client.put("/api/dependencies",
+                        json={"old_from": "Alice", "old_to": "Bob",
+                              "new_from": "Carol", "new_to": "Bob"})
+        assert rv.status_code == 409
+
+    def test_duplicate_new_pair_returns_409(self, client):
+        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
+        client.post("/api/dependencies", json={"from_member": "Carol", "to_member": "Bob"})
+        rv = client.put("/api/dependencies",
+                        json={"old_from": "Alice", "old_to": "Bob",
+                              "new_from": "Carol", "new_to": "Bob"})
+        assert rv.status_code == 409
+
+    def test_invalid_member_returns_400(self, client):
+        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
+        rv = client.put("/api/dependencies",
+                        json={"old_from": "Alice", "old_to": "Bob",
+                              "new_from": "Alice", "new_to": "Unknown"})
+        assert rv.status_code == 400
+
+    def test_state_persisted_after_replace(self, app, client):
+        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
+        client.put("/api/dependencies",
+                   json={"old_from": "Alice", "old_to": "Bob",
+                         "new_from": "Alice", "new_to": "Carol"})
+        state = app.config["STATE"]
+        assert {"from_member": "Alice", "to_member": "Carol"} in state.dependencies
+        assert {"from_member": "Alice", "to_member": "Bob"} not in state.dependencies
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/clusters/<name> with rename  (T057 / Phase 11)
+# ---------------------------------------------------------------------------
+
+class TestPutClustersWithRename:
+    def test_rename_only_returns_200(self, client):
+        client.post("/api/clusters", json={"name": "Backend", "members": ["Alice"]})
+        rv = client.put("/api/clusters/Backend", json={"name": "Core"})
+        assert rv.status_code == 200
+
+    def test_rename_updates_cluster_name(self, client):
+        client.post("/api/clusters", json={"name": "Backend", "members": ["Alice"]})
+        client.put("/api/clusters/Backend", json={"name": "Core"})
+        data = client.get("/api/clusters").get_json()
+        names = [c["name"] for c in data["clusters"]]
+        assert "Core" in names
+        assert "Backend" not in names
+
+    def test_rename_preserves_members(self, client):
+        client.post("/api/clusters", json={"name": "Backend", "members": ["Alice", "Bob"]})
+        client.put("/api/clusters/Backend", json={"name": "Core"})
+        data = client.get("/api/clusters").get_json()
+        core = next(c for c in data["clusters"] if c["name"] == "Core")
+        assert set(core["members"]) == {"Alice", "Bob"}
+
+    def test_update_members_only_returns_200(self, client):
+        client.post("/api/clusters", json={"name": "Backend", "members": ["Alice"]})
+        rv = client.put("/api/clusters/Backend", json={"members": ["Alice", "Carol"]})
+        assert rv.status_code == 200
+
+    def test_update_members_only_preserves_name(self, client):
+        client.post("/api/clusters", json={"name": "Backend", "members": ["Alice"]})
+        client.put("/api/clusters/Backend", json={"members": ["Alice", "Carol"]})
+        data = client.get("/api/clusters").get_json()
+        assert any(c["name"] == "Backend" for c in data["clusters"])
+
+    def test_rename_and_update_members(self, client):
+        client.post("/api/clusters", json={"name": "Backend", "members": ["Alice"]})
+        rv = client.put("/api/clusters/Backend", json={"name": "Core", "members": ["Carol"]})
+        assert rv.status_code == 200
+        data = client.get("/api/clusters").get_json()
+        core = next(c for c in data["clusters"] if c["name"] == "Core")
+        assert core["members"] == ["Carol"]
+
+    def test_rename_to_duplicate_name_returns_400(self, client):
+        client.post("/api/clusters", json={"name": "Backend", "members": ["Alice"]})
+        client.post("/api/clusters", json={"name": "Frontend", "members": ["Bob"]})
+        rv = client.put("/api/clusters/Backend", json={"name": "Frontend"})
+        assert rv.status_code == 400
+
+    def test_rename_to_same_name_is_ok(self, client):
+        client.post("/api/clusters", json={"name": "Backend", "members": ["Alice"]})
+        rv = client.put("/api/clusters/Backend", json={"name": "Backend"})
+        assert rv.status_code == 200
+
+    def test_unknown_cluster_returns_404(self, client):
+        rv = client.put("/api/clusters/Nonexistent", json={"name": "X"})
+        assert rv.status_code == 404
+
+    def test_invalid_member_returns_400(self, client):
+        client.post("/api/clusters", json={"name": "Backend", "members": ["Alice"]})
+        rv = client.put("/api/clusters/Backend", json={"members": ["Unknown"]})
+        assert rv.status_code == 400
+
+    def test_dashboard_reflects_rename(self, client):
+        client.post("/api/clusters", json={"name": "Backend", "members": ["Alice"]})
+        client.put("/api/clusters/Backend", json={"name": "Core"})
+        data = client.get("/api/dashboard").get_json()
+        alice = get_member(data, "Alice")
+        assert "Core" in alice["clusters"]
+        assert "Backend" not in alice["clusters"]
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/phases/<name>  (T058 / Phase 11)
+# ---------------------------------------------------------------------------
+
+class TestPutPhases:
+    def test_update_name_only_returns_200(self, client):
+        client.post("/api/phases",
+                    json={"name": "Go-Live", "start_date": "2026-06-22", "end_date": "2026-06-26"})
+        rv = client.put("/api/phases/Go-Live", json={"name": "Launch"})
+        assert rv.status_code == 200
+
+    def test_update_name_only_renames_phase(self, client):
+        client.post("/api/phases",
+                    json={"name": "Go-Live", "start_date": "2026-06-22", "end_date": "2026-06-26"})
+        client.put("/api/phases/Go-Live", json={"name": "Launch"})
+        phases = client.get("/api/phases").get_json()["phases"]
+        names = [p["name"] for p in phases]
+        assert "Launch" in names
+        assert "Go-Live" not in names
+
+    def test_update_dates_only_returns_200(self, client):
+        client.post("/api/phases",
+                    json={"name": "Go-Live", "start_date": "2026-06-22", "end_date": "2026-06-26"})
+        rv = client.put("/api/phases/Go-Live",
+                        json={"start_date": "2026-06-23", "end_date": "2026-06-27"})
+        assert rv.status_code == 200
+
+    def test_update_dates_only_changes_dates(self, client):
+        client.post("/api/phases",
+                    json={"name": "Go-Live", "start_date": "2026-06-22", "end_date": "2026-06-26"})
+        client.put("/api/phases/Go-Live",
+                   json={"start_date": "2026-06-23", "end_date": "2026-06-27"})
+        phases = client.get("/api/phases").get_json()["phases"]
+        go_live = next(p for p in phases if p["name"] == "Go-Live")
+        assert go_live["start_date"] == "2026-06-23"
+        assert go_live["end_date"] == "2026-06-27"
+
+    def test_update_all_fields(self, client):
+        client.post("/api/phases",
+                    json={"name": "Go-Live", "start_date": "2026-06-22", "end_date": "2026-06-26"})
+        rv = client.put("/api/phases/Go-Live",
+                        json={"name": "Launch", "start_date": "2026-07-01",
+                              "end_date": "2026-07-05"})
+        assert rv.status_code == 200
+        phases = client.get("/api/phases").get_json()["phases"]
+        launch = next(p for p in phases if p["name"] == "Launch")
+        assert launch["start_date"] == "2026-07-01"
+        assert launch["end_date"] == "2026-07-05"
+
+    def test_duplicate_name_returns_400(self, client):
+        client.post("/api/phases",
+                    json={"name": "Go-Live", "start_date": "2026-06-22", "end_date": "2026-06-26"})
+        client.post("/api/phases",
+                    json={"name": "Sprint 10", "start_date": "2026-06-15", "end_date": "2026-06-21"})
+        rv = client.put("/api/phases/Go-Live", json={"name": "Sprint 10"})
+        assert rv.status_code == 400
+
+    def test_end_before_start_returns_400(self, client):
+        client.post("/api/phases",
+                    json={"name": "Go-Live", "start_date": "2026-06-22", "end_date": "2026-06-26"})
+        rv = client.put("/api/phases/Go-Live",
+                        json={"start_date": "2026-07-10", "end_date": "2026-07-05"})
+        assert rv.status_code == 400
+
+    def test_unknown_phase_returns_404(self, client):
+        rv = client.put("/api/phases/Nonexistent", json={"name": "X"})
+        assert rv.status_code == 404
+
+    def test_state_persisted_after_update(self, app, client):
+        client.post("/api/phases",
+                    json={"name": "Go-Live", "start_date": "2026-06-22", "end_date": "2026-06-26"})
+        client.put("/api/phases/Go-Live", json={"name": "Launch"})
+        state = app.config["STATE"]
+        assert any(p["name"] == "Launch" for p in state.phases)
+        assert not any(p["name"] == "Go-Live" for p in state.phases)
+
+    def test_dashboard_reflects_phase_update(self, client):
+        client.post("/api/phases",
+                    json={"name": "Go-Live", "start_date": "2026-06-22", "end_date": "2026-06-26"})
+        client.put("/api/phases/Go-Live", json={"name": "Launch"})
+        data = client.get("/api/dashboard").get_json()
+        assert any(p["name"] == "Launch" for p in data["phases"])
+        assert not any(p["name"] == "Go-Live" for p in data["phases"])

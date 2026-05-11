@@ -241,6 +241,38 @@ stacked. Panel allows add/remove. Config persists across reload.
 
 ---
 
+## Phase 11: Inline Edit — Dependencies, Clusters & Phases (FR-022 / FR-023)
+
+**Goal**: All three management panels support inline row-expansion editing. Each row gets an Edit
+button that expands it into editable fields with Save/Cancel buttons. Save triggers server
+validation; on failure the row stays open with an inline error.
+
+**Independent Test**: Edit a dependency (change target), rename a cluster, and update a phase's
+date range. Verify each saves correctly and the timeline updates immediately. Attempt a
+cycle-creating dependency edit and verify inline error appears without saving.
+
+### Tests for Phase 11
+
+- [x] T055 [P] Write failing unit tests for `update_phase` in `tests/unit/test_phases_manager.py`: update name only (other fields unchanged); update dates only; update all three fields atomically; rename to a name already used by another phase raises `ValueError`; `end_date < start_date` raises `ValueError`; updating a phase that does not exist raises `KeyError`
+- [x] T056 [P] Write failing integration tests for `PUT /api/dependencies` in `tests/integration/test_app.py`: 200 with updated list on valid atomic replace (`old_from`/`old_to` → `new_from`/`new_to`); 404 when original (`old_from`, `old_to`) pair not found; 409 cycle detected on new pair; 409 new pair duplicates an existing dependency; 400 on invalid member name in new pair
+- [x] T057 [P] Write failing integration tests for renamed `PUT /api/clusters/<name>` in `tests/integration/test_app.py`: 200 rename only (pass `name` field, omit `members`); 200 update members only (omit `name` field); 200 rename + member update together; 400 when new name duplicates an existing cluster; 400 on unknown member in `members` list; 404 when cluster name in URL not found
+- [x] T058 [P] Write failing integration tests for `PUT /api/phases/<name>` in `tests/integration/test_app.py`: 200 update name only; 200 update start/end dates only; 200 update all three fields; 400 when new name duplicates an existing phase; 400 when `end_date < start_date`; 404 when phase name in URL not found
+
+### Implementation for Phase 11
+
+- [x] T059 Implement `update_phase(old_name, new_name, start_date_str, end_date_str, phases) → list[dict]` in `absence_dashboard/phases_manager.py`: all three target fields are optional (`None` = keep current value); validates new name is unique among other phases (skip check if name is unchanged); validates `end_date >= start_date` after applying updates; raises `KeyError` for unknown `old_name` — confirm T055 now passes
+- [x] T060 Implement `PUT /api/dependencies` route in `absence_dashboard/app.py`: parse `{old_from, old_to, new_from, new_to}` body; validate `new_from`/`new_to` exist in loaded member set; remove old edge via `DependencyGraph`; add new edge with cycle detection; save state — confirm T056 now passes
+- [x] T061 Extend `PUT /api/clusters/<cluster_name>` route in `absence_dashboard/app.py` to accept an optional `name` field: when `name` differs from the URL param, validate no other cluster already uses it, then rename in place; update `members` list if provided; save state — confirm T057 now passes
+- [x] T062 Implement `PUT /api/phases/<path:phase_name>` route in `absence_dashboard/app.py`: parse optional `{name, start_date, end_date}` body; call `update_phase(phase_name, ...)` with `None` for any omitted field; save state; return `{"phases": state.phases}` 200 — confirm T058 now passes
+- [x] T063 [P] Add inline edit UI to dependency panel in `absence_dashboard/static/main.js`: each rendered dependency row gets an Edit button; clicking it replaces the row's read-only display with an expanded form containing pre-filled "From" and "To" `<select>` dropdowns and Save/Cancel buttons; Save calls `PUT /api/dependencies` with `{old_from, old_to, new_from, new_to}`; on 4xx keep row expanded and display the server error message inline below the dropdowns; Cancel restores the read-only row; on 200 re-fetch and re-render the full dashboard
+- [x] T064 [P] Add inline edit UI to cluster panel in `absence_dashboard/static/main.js`: each cluster row gets an Edit button; clicking expands the row with a pre-filled cluster name `<input>` and a member multi-`<select>` with current members pre-selected; Save calls `PUT /api/clusters/<current_name>` with `{name, members}` body; on 4xx display inline error below the affected field and keep row open; Cancel collapses without change; on 200 re-fetch and re-render
+- [x] T065 [P] Add inline edit UI to phase panel in `absence_dashboard/static/main.js`: each phase row gets an Edit button; clicking expands the row with pre-filled name `<input>`, start-date `<input type="date">`, and end-date `<input type="date">`; Save calls `PUT /api/phases/<current_name>`; on 4xx display inline error below the affected field and keep row open; Cancel collapses; on 200 re-fetch and re-render (phase banner row shifts to new date range immediately)
+- [x] T066 Run full `pytest` suite confirming all tests green; end-to-end smoke test: (a) edit a dependency's "to" member, verify at-risk indicators shift; (b) rename a cluster, verify label updates in timeline; (c) edit a phase date range, verify banner row spans new columns; (d) attempt a cycle-creating dependency edit via UI, verify inline error without save; confirm no `alert()` calls used for error display
+
+**Checkpoint**: All 66 tasks complete. Inline edit operational across all three panels. Full test suite green.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -255,6 +287,7 @@ stacked. Panel allows add/remove. Config persists across reload.
 - **Phase 8 (Polish)**: Depends on all user story phases complete
 - **Phase 9 (US6)**: Depends on Phase 2; independent of US1–US5 (new entity, no shared state)
 - **Phase 10 (Final Polish)**: Depends on Phase 9 complete
+- **Phase 11 (Inline Edit)**: Depends on Phases 4, 6, 9 (dependency graph, clusters, and phases all must exist before edit endpoints can be layered on top)
 
 ### User Story Dependencies
 
@@ -327,6 +360,7 @@ Phase 5 (US3) starts only after Phase 4 completes.
 7. Polish → port arg, contract completeness, quickstart validation
 8. + US6 → Project phase banner rows
 9. Final Polish → full suite green, end-to-end smoke test
+10. + Phase 11 → Inline edit for dependencies, clusters, phases
 
 ---
 
@@ -337,4 +371,4 @@ Phase 5 (US3) starts only after Phase 4 completes.
 - Commit after each phase checkpoint passes
 - `state/state.json` is created automatically on first run; delete it to reset all config
 - `tests/conftest.py` `sample_workbook` fixture must exactly mirror confirmed grid layout: Col C filter, Col D name, Col F+ dates starting 2026-04-27
-- Total tasks: **54** (T001–T054; T043–T044 added 2026-05-08 clarification round 1; T045–T054 added 2026-05-08 clarification round 2 — weekday revert + US6 project phases)
+- Total tasks: **66** (T001–T054 complete ✅; T055–T066 added 2026-05-11 — inline edit for dependencies, clusters, and phases per FR-022/FR-023)

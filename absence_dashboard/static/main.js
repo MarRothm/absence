@@ -224,7 +224,38 @@ function renderTimeline(data) {
 }
 
 // ---------------------------------------------------------------------------
-// Dependency panel  (US2)
+// Inline edit helpers
+// ---------------------------------------------------------------------------
+
+function makeSelect(names, selectedValue, cls) {
+  const sel = document.createElement("select");
+  if (cls) sel.className = cls;
+  names.forEach(n => {
+    const opt = document.createElement("option");
+    opt.value = opt.textContent = n;
+    if (n === selectedValue) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  return sel;
+}
+
+function showInlineError(container, msg) {
+  let errEl = container.querySelector(".inline-edit-error");
+  if (!errEl) {
+    errEl = document.createElement("div");
+    errEl.className = "inline-edit-error";
+    container.appendChild(errEl);
+  }
+  errEl.textContent = msg;
+}
+
+function clearInlineError(container) {
+  const errEl = container.querySelector(".inline-edit-error");
+  if (errEl) errEl.remove();
+}
+
+// ---------------------------------------------------------------------------
+// Dependency panel  (US2 + Phase 11 inline edit)
 // ---------------------------------------------------------------------------
 
 function renderDependencies(data) {
@@ -247,19 +278,74 @@ function renderDependencies(data) {
   list.innerHTML = "";
   data.dependencies.forEach(dep => {
     const li = document.createElement("li");
-    li.innerHTML = `<span>${dep.from_member} → ${dep.to_member}</span>`;
-    const btn = document.createElement("button");
-    btn.className = "btn-remove";
-    btn.textContent = "✕";
-    btn.title = "Remove dependency";
-    btn.onclick = async () => {
+
+    // --- display view ---
+    const displayDiv = document.createElement("div");
+    displayDiv.className = "item-display";
+    displayDiv.innerHTML = `<span>${dep.from_member} → ${dep.to_member}</span>`;
+
+    const editBtn = document.createElement("button");
+    editBtn.className = "btn-edit";
+    editBtn.textContent = "Edit";
+    editBtn.title = "Edit dependency";
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "btn-remove";
+    removeBtn.textContent = "✕";
+    removeBtn.title = "Remove dependency";
+    removeBtn.onclick = async () => {
       const res = await apiFetch("/api/dependencies", "DELETE",
         { from_member: dep.from_member, to_member: dep.to_member });
       if (res.ok) { await refreshDashboard(); } else {
         showWarning(`Could not remove dependency: ${res.data.error}`);
       }
     };
-    li.appendChild(btn);
+    displayDiv.appendChild(editBtn);
+    displayDiv.appendChild(removeBtn);
+
+    // --- edit view ---
+    const editDiv = document.createElement("div");
+    editDiv.className = "item-edit hidden";
+
+    const newFromSel = makeSelect(names, dep.from_member, "edit-select");
+    const arrow = document.createElement("span");
+    arrow.textContent = " → ";
+    const newToSel = makeSelect(names, dep.to_member, "edit-select");
+
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "btn-save";
+    saveBtn.textContent = "Save";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn-cancel";
+    cancelBtn.textContent = "Cancel";
+
+    editDiv.append(newFromSel, arrow, newToSel, saveBtn, cancelBtn);
+
+    editBtn.onclick = () => {
+      displayDiv.classList.add("hidden");
+      editDiv.classList.remove("hidden");
+    };
+    cancelBtn.onclick = () => {
+      clearInlineError(editDiv);
+      displayDiv.classList.remove("hidden");
+      editDiv.classList.add("hidden");
+    };
+    saveBtn.onclick = async () => {
+      clearInlineError(editDiv);
+      const res = await apiFetch("/api/dependencies", "PUT", {
+        old_from: dep.from_member, old_to: dep.to_member,
+        new_from: newFromSel.value, new_to: newToSel.value,
+      });
+      if (res.ok) {
+        await refreshDashboard();
+      } else {
+        showInlineError(editDiv, res.data.error || "Could not save dependency.");
+      }
+    };
+
+    li.appendChild(displayDiv);
+    li.appendChild(editDiv);
     list.appendChild(li);
   });
 }
@@ -281,7 +367,7 @@ document.getElementById("btn-add-dep").addEventListener("click", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Cluster panel  (US4)
+// Cluster panel  (US4 + Phase 11 inline edit)
 // ---------------------------------------------------------------------------
 
 function renderClusters(data) {
@@ -301,22 +387,90 @@ function renderClusters(data) {
   list.innerHTML = "";
   data.skill_clusters.forEach(cluster => {
     const li = document.createElement("li");
-    li.innerHTML = `
-      <span>
-        <strong>${cluster.name}</strong>
-        <span class="cluster-item-members">${cluster.members.join(", ") || "(empty)"}</span>
-      </span>`;
-    const btn = document.createElement("button");
-    btn.className = "btn-remove";
-    btn.textContent = "✕";
-    btn.title = "Delete cluster";
-    btn.onclick = async () => {
+
+    // --- display view ---
+    const displayDiv = document.createElement("div");
+    displayDiv.className = "item-display";
+    displayDiv.innerHTML = `<span><strong>${cluster.name}</strong> <span class="cluster-item-members">${cluster.members.join(", ") || "(empty)"}</span></span>`;
+
+    const editBtn = document.createElement("button");
+    editBtn.className = "btn-edit";
+    editBtn.textContent = "Edit";
+    editBtn.title = "Edit cluster";
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "btn-remove";
+    removeBtn.textContent = "✕";
+    removeBtn.title = "Delete cluster";
+    removeBtn.onclick = async () => {
       const res = await apiFetch(`/api/clusters/${encodeURIComponent(cluster.name)}`, "DELETE");
       if (res.ok) { await refreshDashboard(); } else {
         showWarning(`Could not delete cluster: ${res.data.error}`);
       }
     };
-    li.appendChild(btn);
+    displayDiv.appendChild(editBtn);
+    displayDiv.appendChild(removeBtn);
+
+    // --- edit view ---
+    const editDiv = document.createElement("div");
+    editDiv.className = "item-edit hidden";
+
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.className = "edit-input";
+    nameInput.value = cluster.name;
+    nameInput.placeholder = "Cluster name";
+
+    const membersMulti = document.createElement("select");
+    membersMulti.multiple = true;
+    membersMulti.className = "edit-select-multi";
+    names.forEach(n => {
+      const opt = document.createElement("option");
+      opt.value = opt.textContent = n;
+      if (cluster.members.includes(n)) opt.selected = true;
+      membersMulti.appendChild(opt);
+    });
+
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "btn-save";
+    saveBtn.textContent = "Save";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn-cancel";
+    cancelBtn.textContent = "Cancel";
+
+    editDiv.append(nameInput, membersMulti, saveBtn, cancelBtn);
+
+    editBtn.onclick = () => {
+      displayDiv.classList.add("hidden");
+      editDiv.classList.remove("hidden");
+    };
+    cancelBtn.onclick = () => {
+      clearInlineError(editDiv);
+      nameInput.value = cluster.name;
+      Array.from(membersMulti.options).forEach(o => {
+        o.selected = cluster.members.includes(o.value);
+      });
+      displayDiv.classList.remove("hidden");
+      editDiv.classList.add("hidden");
+    };
+    saveBtn.onclick = async () => {
+      clearInlineError(editDiv);
+      const newName = nameInput.value.trim();
+      const newMembers = Array.from(membersMulti.selectedOptions).map(o => o.value);
+      const body = { name: newName, members: newMembers };
+      const res = await apiFetch(
+        `/api/clusters/${encodeURIComponent(cluster.name)}`, "PUT", body
+      );
+      if (res.ok) {
+        await refreshDashboard();
+      } else {
+        showInlineError(editDiv, res.data.error || "Could not save cluster.");
+      }
+    };
+
+    li.appendChild(displayDiv);
+    li.appendChild(editDiv);
     list.appendChild(li);
   });
 }
@@ -340,7 +494,7 @@ document.getElementById("btn-create-cluster").addEventListener("click", async ()
 });
 
 // ---------------------------------------------------------------------------
-// Phase panel  (US6)
+// Phase panel  (US6 + Phase 11 inline edit)
 // ---------------------------------------------------------------------------
 
 function renderPhases(data) {
@@ -348,18 +502,91 @@ function renderPhases(data) {
   list.innerHTML = "";
   (data.phases || []).forEach(phase => {
     const li = document.createElement("li");
-    li.innerHTML = `<span><strong>${phase.name}</strong> <span class="cluster-item-members">${phase.start_date} – ${phase.end_date}</span></span>`;
-    const btn = document.createElement("button");
-    btn.className = "btn-remove";
-    btn.textContent = "✕";
-    btn.title = "Remove phase";
-    btn.onclick = async () => {
+
+    // --- display view ---
+    const displayDiv = document.createElement("div");
+    displayDiv.className = "item-display";
+    displayDiv.innerHTML = `<span><strong>${phase.name}</strong> <span class="cluster-item-members">${phase.start_date} – ${phase.end_date}</span></span>`;
+
+    const editBtn = document.createElement("button");
+    editBtn.className = "btn-edit";
+    editBtn.textContent = "Edit";
+    editBtn.title = "Edit phase";
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "btn-remove";
+    removeBtn.textContent = "✕";
+    removeBtn.title = "Remove phase";
+    removeBtn.onclick = async () => {
       const res = await apiFetch(`/api/phases/${encodeURIComponent(phase.name)}`, "DELETE");
       if (res.ok) { await refreshDashboard(); } else {
         showWarning(`Could not remove phase: ${res.data.error}`);
       }
     };
-    li.appendChild(btn);
+    displayDiv.appendChild(editBtn);
+    displayDiv.appendChild(removeBtn);
+
+    // --- edit view ---
+    const editDiv = document.createElement("div");
+    editDiv.className = "item-edit hidden";
+
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.className = "edit-input";
+    nameInput.value = phase.name;
+    nameInput.placeholder = "Phase name";
+
+    const startInput = document.createElement("input");
+    startInput.type = "date";
+    startInput.className = "edit-input";
+    startInput.value = phase.start_date;
+
+    const endInput = document.createElement("input");
+    endInput.type = "date";
+    endInput.className = "edit-input";
+    endInput.value = phase.end_date;
+
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "btn-save";
+    saveBtn.textContent = "Save";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn-cancel";
+    cancelBtn.textContent = "Cancel";
+
+    editDiv.append(nameInput, startInput, endInput, saveBtn, cancelBtn);
+
+    editBtn.onclick = () => {
+      displayDiv.classList.add("hidden");
+      editDiv.classList.remove("hidden");
+    };
+    cancelBtn.onclick = () => {
+      clearInlineError(editDiv);
+      nameInput.value = phase.name;
+      startInput.value = phase.start_date;
+      endInput.value = phase.end_date;
+      displayDiv.classList.remove("hidden");
+      editDiv.classList.add("hidden");
+    };
+    saveBtn.onclick = async () => {
+      clearInlineError(editDiv);
+      const body = {
+        name: nameInput.value.trim(),
+        start_date: startInput.value,
+        end_date: endInput.value,
+      };
+      const res = await apiFetch(
+        `/api/phases/${encodeURIComponent(phase.name)}`, "PUT", body
+      );
+      if (res.ok) {
+        await refreshDashboard();
+      } else {
+        showInlineError(editDiv, res.data.error || "Could not save phase.");
+      }
+    };
+
+    li.appendChild(displayDiv);
+    li.appendChild(editDiv);
     list.appendChild(li);
   });
 }
