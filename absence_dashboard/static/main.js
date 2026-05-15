@@ -237,6 +237,48 @@ function renderTimeline(data) {
 
     grid.appendChild(row);
   });
+
+  // ---- Today indicator  (FR-026) ----
+  applyTodayIndicator(dayIndex, grid);
+}
+
+// ---------------------------------------------------------------------------
+// Today indicator  (FR-026)
+// ---------------------------------------------------------------------------
+
+function applyTodayIndicator(dayIndex, grid) {
+  const now = new Date();
+  const dayOfWeek = now.getDay(); // 0 = Sun, 6 = Sat
+  if (dayOfWeek === 0 || dayOfWeek === 6) return;
+
+  // Build YYYY-MM-DD without timezone drift
+  const todayISO = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+  ].join("-");
+
+  const todayColIndex = dayIndex.findIndex(({ date }) => date === todayISO);
+  if (todayColIndex === -1) return; // today outside visible range
+
+  Array.from(grid.children).forEach(row => {
+    // Skip CW group header row (cells are week-wide, not day-wide)
+    if (row.classList.contains("tg-cw-row")) return;
+    // Skip cluster separator rows (no day cells)
+    if (row.classList.contains("cluster-sep")) return;
+
+    const col = row.children[todayColIndex + 1]; // +1 for the sticky name column
+    if (!col) return;
+    col.classList.add("today-col-start");
+
+    // Insert "Today" label in the day-abbreviation header row
+    if (row.classList.contains("tg-day-row")) {
+      const label = document.createElement("span");
+      label.className = "today-label";
+      label.textContent = "Today";
+      col.prepend(label);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------

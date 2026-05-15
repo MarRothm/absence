@@ -7,6 +7,13 @@
 
 ## Clarifications
 
+### Session 2026-05-15
+
+- Q: Where should the red vertical line be positioned relative to today's day sub-column? → A: Left edge of today's day sub-column — line sits on the column's left border, separating past from present.
+- Q: If today is Saturday or Sunday, where should the today indicator appear? → A: Do not show the indicator — the line is hidden entirely on weekends.
+- Q: Should the today indicator include a text label? → A: Yes — a small "Today" label anchored in the CW/day header row above the line.
+- Q: Should the today indicator extend through project phase banner rows? → A: Yes — full height spanning phase banner rows and all member rows.
+
 ### Session 2026-05-11
 
 - Q: Should the SharePoint URL be an alternative data source alongside local file, or replace it? → A: Both supported — CLI accepts either a local file path or a SharePoint URL; app detects which is provided at startup.
@@ -295,6 +302,8 @@ colors are unchanged.
   portion is rendered.
 - No project phases are defined — the timeline renders without any banner rows; member rows
   display normally.
+- Today falls on a Saturday or Sunday — the today indicator is not shown; no line or label appears.
+- Today falls before the visible timeline start or after the last visible week — the today indicator is not shown.
 - All members are present during a project phase — the banner row still renders; phase visibility
   is independent of absence data.
 - The manager edits a dependency such that it would create a cycle — the edit row stays open with an inline cycle-detection error; the original dependency is unchanged (extends FR-007 to the edit path).
@@ -366,6 +375,8 @@ colors are unchanged.
   parameter) and fetch the `.xlsx` file via an anonymous HTTP GET request using the `requests`
   library. No authentication headers or credentials are required. On refresh, the app MUST
   re-fetch from the SharePoint URL to pick up the latest version of the file.
+- **FR-026**: The dashboard MUST display a red vertical indicator line at the left edge of the current day's day sub-column to mark today's date. The line MUST span the full height of the timeline, including all project phase banner rows and all member rows. A small "Today" label MUST appear above the line, anchored in the day-header row. The indicator MUST NOT be shown when today falls on a Saturday or Sunday. When today falls before the visible timeline range or after year-end, the indicator is also not shown.
+
 - **FR-025**: The dashboard MUST display the date and time the Excel data was last successfully
   loaded or refreshed in the fixed header bar, top-right corner, using the format
   `"Last loaded: D Mon YYYY, HH:MM"` (e.g., `"Last loaded: 11 May 2026, 14:32"`). This

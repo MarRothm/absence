@@ -307,6 +307,25 @@ in header top-right, updating on every successful data load.
 
 ---
 
+## Phase 13: Today Indicator (FR-026)
+
+**Goal**: A red vertical line at the left edge of today's day sub-column, spanning the full
+height of the timeline (phase banner rows + all member rows), with a small "Today" label in
+the day-header row. Hidden on weekends and when today falls outside the visible CW range.
+
+**Independent Test**: Open the dashboard on a weekday within the visible CW range. Verify a
+red vertical line appears at the left edge of the correct day sub-column, a "Today" label
+appears in that column's header cell, and the line extends through phase banner rows and all
+member rows. Open on a Saturday or Sunday; verify no indicator appears.
+
+- [x] T077 [P] Add `--color-today-indicator: #e53e3e` CSS custom property and `.today-col-start` cell class (adds `border-left: 2px solid var(--color-today-indicator)` to mark the left edge of today's column) and `.today-label` inline-block style (small red text, positioned above the day abbreviation) to `absence_dashboard/static/style.css`
+- [x] T078 Update `renderTimeline()` in `absence_dashboard/static/main.js`: after the `<table>` is built, call a `applyTodayIndicator(table, data.calendar_weeks)` helper — compute today via `new Date()`; if `today.getDay()` is 0 (Sun) or 6 (Sat), return early; flatten `data.calendar_weeks` into an ordered list of day ISO-date strings; find the matching index; if no match (today outside visible range), return early; iterate all `<tr>` rows in the table and add class `today-col-start` to the `<td>`/`<th>` at that column index (accounting for the sticky name column offset of 1); insert `<span class="today-label">Today</span>` inside the `<th>` in the day-abbreviation header row at that index
+
+**Checkpoint**: Today indicator visible on weekdays. Line spans full table height including
+phase banners. "Today" label in header. No indicator on weekends or out-of-range dates.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -405,4 +424,4 @@ Phase 5 (US3) starts only after Phase 4 completes.
 - Commit after each phase checkpoint passes
 - `state/state.json` is created automatically on first run; delete it to reset all config
 - `tests/conftest.py` `sample_workbook` fixture must exactly mirror confirmed grid layout: Col C filter, Col D name, Col F+ dates starting 2026-04-27
-- Total tasks: **76** (T001–T066 complete ✅; T067–T076 added 2026-05-11 — SharePoint URL data source and last-loaded timestamp per FR-024/FR-025)
+- Total tasks: **78** (T001–T076 complete ✅; T077–T078 added 2026-05-15 — today indicator per FR-026)
