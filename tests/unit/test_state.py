@@ -19,7 +19,7 @@ class TestLoadState:
     def test_valid_json_deserialised_correctly(self, tmp_path):
         path = str(tmp_path / "state.json")
         data = {
-            "dependencies": [{"from_member": "Alice", "to_member": "Bob"}],
+            "dependencies": [{"from_member": "Alice", "to_members": ["Bob"]}],
             "clusters": [{"name": "Backend", "members": ["Alice", "Bob"]}],
         }
         with open(path, "w") as f:
@@ -27,8 +27,19 @@ class TestLoadState:
         state = load_state(path)
         assert len(state.dependencies) == 1
         assert state.dependencies[0]["from_member"] == "Alice"
+        assert state.dependencies[0]["to_members"] == ["Bob"]
         assert len(state.clusters) == 1
         assert state.clusters[0]["name"] == "Backend"
+
+    def test_old_to_member_format_migrated(self, tmp_path):
+        path = str(tmp_path / "state.json")
+        data = {"dependencies": [{"from_member": "Alice", "to_member": "Bob"}]}
+        with open(path, "w") as f:
+            json.dump(data, f)
+        state = load_state(path)
+        dep = state.dependencies[0]
+        assert dep["to_members"] == ["Bob"]
+        assert "to_member" not in dep
 
     def test_missing_keys_default_to_empty(self, tmp_path):
         path = str(tmp_path / "state.json")
@@ -43,7 +54,7 @@ class TestSaveState:
     def test_saves_valid_json(self, tmp_path):
         path = str(tmp_path / "state.json")
         state = AppState(
-            dependencies=[{"from_member": "Alice", "to_member": "Bob"}],
+            dependencies=[{"from_member": "Alice", "to_members": ["Bob"]}],
             clusters=[{"name": "Backend", "members": ["Alice"]}],
         )
         save_state(state, path)
@@ -55,7 +66,7 @@ class TestSaveState:
     def test_roundtrip_preserves_data(self, tmp_path):
         path = str(tmp_path / "state.json")
         original = AppState(
-            dependencies=[{"from_member": "X", "to_member": "Y"}],
+            dependencies=[{"from_member": "X", "to_members": ["Y"]}],
             clusters=[{"name": "C1", "members": ["X", "Y"]}],
         )
         save_state(original, path)

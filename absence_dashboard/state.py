@@ -10,13 +10,25 @@ class AppState:
     phases: list = field(default_factory=list)
 
 
+def _migrate_dependencies(deps: list) -> list:
+    migrated = []
+    for d in deps:
+        if "to_member" in d and "to_members" not in d:
+            entry = {k: v for k, v in d.items() if k != "to_member"}
+            entry["to_members"] = [d["to_member"]]
+            migrated.append(entry)
+        else:
+            migrated.append(d)
+    return migrated
+
+
 def load_state(path: str) -> AppState:
     if not os.path.exists(path):
         return AppState()
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
     return AppState(
-        dependencies=data.get("dependencies", []),
+        dependencies=_migrate_dependencies(data.get("dependencies", [])),
         clusters=data.get("clusters", []),
         phases=data.get("phases", []),
     )
