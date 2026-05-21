@@ -1,6 +1,10 @@
 import os
 import sys
+import warnings
 from datetime import date, datetime, timedelta
+
+# Suppress urllib3's LibreSSL warning on macOS — harmless for a local-only tool
+warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
 
 from flask import Flask, jsonify, request
 
@@ -217,13 +221,16 @@ def create_app(excel_path: str, state_path: str = "state/state.json") -> Flask:
     @app.route("/api/dependencies", methods=["POST"])
     def post_dependency():
         body = request.get_json(silent=True) or {}
-        source = body.get("from_member", "")
-        target = body.get("to_member", "")
+        source      = body.get("from_member", "")
+        target      = body.get("to_member", "")
+        active_from = body.get("active_from") or None
+        active_to   = body.get("active_to") or None
         valid_names = {m.name for m in app.config["MEMBERS"]}
         state = app.config["STATE"]
         graph = DependencyGraph(state.dependencies)
         try:
-            graph.add_edge(source, target, valid_names)
+            graph.add_edge(source, target, valid_names,
+                           active_from=active_from, active_to=active_to)
         except CycleError as e:
             return jsonify({"error": str(e)}), 409
         except ValueError as e:
@@ -242,24 +249,37 @@ def create_app(excel_path: str, state_path: str = "state/state.json") -> Flask:
     @app.route("/api/dependencies", methods=["PUT"])
     def put_dependency():
         body = request.get_json(silent=True) or {}
-        old_from = body.get("old_from", "")
-        old_to = body.get("old_to", "")
-        new_from = body.get("new_from", "")
-        new_to = body.get("new_to", "")
+        old_from        = body.get("old_from", "")
+        old_to          = body.get("old_to", "")
+        old_active_from = body.get("old_active_from") or None
+        old_active_to   = body.get("old_active_to") or None
+        new_from        = body.get("new_from", "")
+        new_to          = body.get("new_to", "")
+        new_active_from = body.get("new_active_from") or None
+        new_active_to   = body.get("new_active_to") or None
         valid_names = {m.name for m in app.config["MEMBERS"]}
         state = app.config["STATE"]
 
         if new_from not in valid_names or new_to not in valid_names:
-            return jsonify({"error": f"Invalid member name"}), 400
+            return jsonify({"error": "Invalid member name"}), 400
 
-        old_pair = {"from_member": old_from, "to_member": old_to}
-        if old_pair not in state.dependencies:
+        # Locate old entry by full four-field key
+        old_entry = next(
+            (d for d in state.dependencies
+             if d["from_member"] == old_from
+             and d["to_member"] == old_to
+             and d.get("active_from") == old_active_from
+             and d.get("active_to") == old_active_to),
+            None,
+        )
+        if old_entry is None:
             return jsonify({"error": "Dependency not found"}), 404
 
-        remaining = [d for d in state.dependencies if d != old_pair]
+        remaining = [d for d in state.dependencies if d is not old_entry]
         graph = DependencyGraph(remaining)
         try:
-            graph.add_edge(new_from, new_to, valid_names)
+            graph.add_edge(new_from, new_to, valid_names,
+                           active_from=new_active_from, active_to=new_active_to)
         except CycleError as e:
             return jsonify({"error": str(e)}), 409
         except ValueError as e:
@@ -279,12 +299,14 @@ def create_app(excel_path: str, state_path: str = "state/state.json") -> Flask:
     @app.route("/api/dependencies", methods=["DELETE"])
     def delete_dependency():
         body = request.get_json(silent=True) or {}
-        source = body.get("from_member", "")
-        target = body.get("to_member", "")
+        source      = body.get("from_member", "")
+        target      = body.get("to_member", "")
+        active_from = body.get("active_from") or None
+        active_to   = body.get("active_to") or None
         state = app.config["STATE"]
         graph = DependencyGraph(state.dependencies)
         try:
-            graph.remove_edge(source, target)
+            graph.remove_edge(source, target, active_from=active_from, active_to=active_to)
         except KeyError as e:
             return jsonify({"error": str(e)}), 404
         state.dependencies = graph.edges()

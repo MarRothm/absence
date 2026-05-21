@@ -135,3 +135,93 @@ class TestComputeAtRiskWeeks:
 
         result = DependencyGraph.compute_at_risk_weeks("Alice", edges, member_blocks_map, cws)
         assert 19 in result
+
+
+# ---------------------------------------------------------------------------
+# Date-bounded dependencies  (Phase 14 / FR-005 / FR-006 / FR-007)
+# ---------------------------------------------------------------------------
+
+class TestDateBoundedDependencies:
+    def test_edge_with_dates_stores_date_fields(self):
+        g = DependencyGraph()
+        g.add_edge("Alice", "Bob", MEMBERS, active_from="2026-06-01", active_to="2026-06-30")
+        edge = g.edges()[0]
+        assert edge["active_from"] == "2026-06-01"
+        assert edge["active_to"] == "2026-06-30"
+
+    def test_edge_without_dates_omits_date_fields(self):
+        g = DependencyGraph()
+        g.add_edge("Alice", "Bob", MEMBERS)
+        edge = g.edges()[0]
+        assert edge.get("active_from") is None
+        assert edge.get("active_to") is None
+
+    def test_only_active_from_raises(self):
+        g = DependencyGraph()
+        with pytest.raises(ValueError, match="neither"):
+            g.add_edge("Alice", "Bob", MEMBERS, active_from="2026-06-01")
+
+    def test_only_active_to_raises(self):
+        g = DependencyGraph()
+        with pytest.raises(ValueError, match="neither"):
+            g.add_edge("Alice", "Bob", MEMBERS, active_to="2026-06-30")
+
+    def test_active_from_after_active_to_raises(self):
+        g = DependencyGraph()
+        with pytest.raises(ValueError):
+            g.add_edge("Alice", "Bob", MEMBERS,
+                       active_from="2026-07-01", active_to="2026-06-30")
+
+    def test_same_pair_different_date_ranges_allowed(self):
+        g = DependencyGraph()
+        g.add_edge("Alice", "Bob", MEMBERS, active_from="2026-06-01", active_to="2026-06-30")
+        g.add_edge("Alice", "Bob", MEMBERS, active_from="2026-09-01", active_to="2026-09-30")
+        assert len(g.edges()) == 2
+
+    def test_identical_tuple_rejected(self):
+        g = DependencyGraph()
+        g.add_edge("Alice", "Bob", MEMBERS, active_from="2026-06-01", active_to="2026-06-30")
+        with pytest.raises(ValueError, match="already exists"):
+            g.add_edge("Alice", "Bob", MEMBERS,
+                       active_from="2026-06-01", active_to="2026-06-30")
+
+    def test_remove_edge_with_dates_removes_correct_entry(self):
+        g = DependencyGraph()
+        g.add_edge("Alice", "Bob", MEMBERS, active_from="2026-06-01", active_to="2026-06-30")
+        g.add_edge("Alice", "Bob", MEMBERS, active_from="2026-09-01", active_to="2026-09-30")
+        g.remove_edge("Alice", "Bob", active_from="2026-06-01", active_to="2026-06-30")
+        edges = g.edges()
+        assert len(edges) == 1
+        assert edges[0]["active_from"] == "2026-09-01"
+
+    def test_at_risk_only_within_active_range(self):
+        # Bob absent in CW28 (Jul), but dependency active only in June → no at-risk
+        edges = [{"from_member": "Alice", "to_member": "Bob",
+                  "active_from": "2026-06-01", "active_to": "2026-06-30"}]
+        bob_blocks = [AbsencePeriod(date(2026, 7, 6), date(2026, 7, 10))]
+        member_blocks_map = {"Bob": bob_blocks, "Alice": []}
+        cws = [{"year": 2026, "week_number": 28, "label": "CW28",
+                "start": "2026-07-06", "end": "2026-07-10"}]
+        result = DependencyGraph.compute_at_risk_weeks("Alice", edges, member_blocks_map, cws)
+        assert 28 not in result
+
+    def test_at_risk_within_active_range_when_dep_absent(self):
+        # Bob absent in CW24 (Jun), dependency active in June → at-risk
+        edges = [{"from_member": "Alice", "to_member": "Bob",
+                  "active_from": "2026-06-01", "active_to": "2026-06-30"}]
+        bob_blocks = [AbsencePeriod(date(2026, 6, 8), date(2026, 6, 12))]
+        member_blocks_map = {"Bob": bob_blocks, "Alice": []}
+        cws = [{"year": 2026, "week_number": 24, "label": "CW24",
+                "start": "2026-06-08", "end": "2026-06-12"}]
+        result = DependencyGraph.compute_at_risk_weeks("Alice", edges, member_blocks_map, cws)
+        assert 24 in result
+
+    def test_indefinite_dependency_unchanged(self):
+        # No dates → at-risk for all weeks where dep is absent (existing behaviour)
+        edges = [{"from_member": "Alice", "to_member": "Bob"}]
+        bob_blocks = [AbsencePeriod(date(2026, 7, 6), date(2026, 7, 10))]
+        member_blocks_map = {"Bob": bob_blocks, "Alice": []}
+        cws = [{"year": 2026, "week_number": 28, "label": "CW28",
+                "start": "2026-07-06", "end": "2026-07-10"}]
+        result = DependencyGraph.compute_at_risk_weeks("Alice", edges, member_blocks_map, cws)
+        assert 28 in result

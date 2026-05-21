@@ -340,7 +340,11 @@ function renderDependencies(data) {
     // --- display view ---
     const displayDiv = document.createElement("div");
     displayDiv.className = "item-display";
-    displayDiv.innerHTML = `<span>${dep.from_member} → ${dep.to_member}</span>`;
+    const rangeText = dep.active_from
+      ? ` (${dep.active_from} – ${dep.active_to})`
+      : "";
+    displayDiv.innerHTML =
+      `<span>${dep.from_member} → ${dep.to_member}<span class="cluster-item-members">${rangeText}</span></span>`;
 
     const editBtn = document.createElement("button");
     editBtn.className = "btn-edit";
@@ -352,8 +356,9 @@ function renderDependencies(data) {
     removeBtn.textContent = "✕";
     removeBtn.title = "Remove dependency";
     removeBtn.onclick = async () => {
-      const res = await apiFetch("/api/dependencies", "DELETE",
-        { from_member: dep.from_member, to_member: dep.to_member });
+      const body = { from_member: dep.from_member, to_member: dep.to_member };
+      if (dep.active_from) { body.active_from = dep.active_from; body.active_to = dep.active_to; }
+      const res = await apiFetch("/api/dependencies", "DELETE", body);
       if (res.ok) { await refreshDashboard(); } else {
         showWarning(`Could not remove dependency: ${res.data.error}`);
       }
@@ -370,6 +375,21 @@ function renderDependencies(data) {
     arrow.textContent = " → ";
     const newToSel = makeSelect(names, dep.to_member, "edit-select");
 
+    const newActiveFrom = document.createElement("input");
+    newActiveFrom.type = "date";
+    newActiveFrom.className = "edit-input";
+    newActiveFrom.value = dep.active_from || "";
+    newActiveFrom.title = "Active from (optional)";
+
+    const dash = document.createElement("span");
+    dash.textContent = " – ";
+
+    const newActiveTo = document.createElement("input");
+    newActiveTo.type = "date";
+    newActiveTo.className = "edit-input";
+    newActiveTo.value = dep.active_to || "";
+    newActiveTo.title = "Active to (optional)";
+
     const saveBtn = document.createElement("button");
     saveBtn.className = "btn-save";
     saveBtn.textContent = "Save";
@@ -378,7 +398,7 @@ function renderDependencies(data) {
     cancelBtn.className = "btn-cancel";
     cancelBtn.textContent = "Cancel";
 
-    editDiv.append(newFromSel, arrow, newToSel, saveBtn, cancelBtn);
+    editDiv.append(newFromSel, arrow, newToSel, newActiveFrom, dash, newActiveTo, saveBtn, cancelBtn);
 
     editBtn.onclick = () => {
       displayDiv.classList.add("hidden");
@@ -391,10 +411,14 @@ function renderDependencies(data) {
     };
     saveBtn.onclick = async () => {
       clearInlineError(editDiv);
-      const res = await apiFetch("/api/dependencies", "PUT", {
+      const body = {
         old_from: dep.from_member, old_to: dep.to_member,
+        old_active_from: dep.active_from || null, old_active_to: dep.active_to || null,
         new_from: newFromSel.value, new_to: newToSel.value,
-      });
+        new_active_from: newActiveFrom.value || null,
+        new_active_to: newActiveTo.value || null,
+      };
+      const res = await apiFetch("/api/dependencies", "PUT", body);
       if (res.ok) {
         await refreshDashboard();
       } else {
@@ -409,14 +433,19 @@ function renderDependencies(data) {
 }
 
 document.getElementById("btn-add-dep").addEventListener("click", async () => {
-  const from = document.getElementById("dep-from").value;
-  const to   = document.getElementById("dep-to").value;
+  const from       = document.getElementById("dep-from").value;
+  const to         = document.getElementById("dep-to").value;
+  const activeFrom = document.getElementById("dep-active-from").value || null;
+  const activeTo   = document.getElementById("dep-active-to").value || null;
   const errEl = document.getElementById("dep-error");
   errEl.classList.add("hidden");
   if (!from || !to) return;
-  const res = await apiFetch("/api/dependencies", "POST",
-    { from_member: from, to_member: to });
+  const body = { from_member: from, to_member: to };
+  if (activeFrom) { body.active_from = activeFrom; body.active_to = activeTo; }
+  const res = await apiFetch("/api/dependencies", "POST", body);
   if (res.ok) {
+    document.getElementById("dep-active-from").value = "";
+    document.getElementById("dep-active-to").value = "";
     await refreshDashboard();
   } else {
     errEl.textContent = res.data.error || "Could not add dependency.";

@@ -326,6 +326,31 @@ phase banners. "Today" label in header. No indicator on weekends or out-of-range
 
 ---
 
+## Phase 14: Time-Bounded Dependencies (FR-005 / FR-006 / FR-007 updated)
+
+**Goal**: Each dependency may carry an optional active date range (`active_from`, `active_to`).
+When set, at-risk indicators only appear for calendar weeks that overlap the active window.
+Uniqueness key changes from `(from, to)` to `(from, to, active_from, active_to)`, allowing
+the same pair with different date ranges. Omitting both dates keeps the dependency indefinitely
+active (backwards-compatible with existing data).
+
+**Independent Test**: Add A→B with `active_from=2026-06-01`, `active_to=2026-06-30`. Mark B
+absent in CW24 (Jun) and CW28 (Jul). Verify A shows at-risk only in CW24. Add a second A→B
+with `active_from=2026-09-01`, `active_to=2026-09-30`; verify both entries coexist. Attempt to
+add the identical four-field tuple again; verify 409 rejection.
+
+- [x] T079 Write failing unit tests for date-bounded dependencies in `tests/unit/test_graph.py`: (a) `add_edge` with `active_from`/`active_to` stores both fields on the edge dict; (b) omitting both dates stores `None` for both (backwards-compatible); (c) providing only `active_from` without `active_to` raises `ValueError`; (d) `active_from > active_to` raises `ValueError`; (e) same (from, to) pair with different date ranges both accepted; (f) identical (from, to, active_from, active_to) tuple raises `ValueError`; (g) `remove_edge` with date args removes the correct specific tuple; (h) `compute_at_risk_weeks` returns no at-risk for weeks outside the edge's active range; (i) `compute_at_risk_weeks` returns at-risk for weeks inside the range when depended-on member is absent; (j) indefinite dependency (no dates) continues to produce at-risk weeks as before
+- [x] T080 Update `absence_dashboard/graph.py`: extend `add_edge(source, target, valid_members, active_from=None, active_to=None)` — validate both-or-neither date rule, validate `active_from <= active_to`, change duplicate check to `(source, target, active_from, active_to)` tuple, store `active_from` and `active_to` on the edge dict; extend `remove_edge(source, target, active_from=None, active_to=None)` to match on all four fields; update `compute_at_risk_weeks` — for each edge from `member_name`, if the edge has `active_from`/`active_to` set, only add the CW to the at-risk set when `cw_start <= active_to` AND `cw_end >= active_from`; edges with no dates behave as before — confirm T079 now passes
+- [x] T081 [P] Write failing integration tests for updated dependency endpoints in `tests/integration/test_app.py`: `POST /api/dependencies` 201 with valid date range; 400 when only `active_from` provided without `active_to`; 400 when `active_from > active_to`; two A→B entries with different date ranges both return 201; identical (from,to,active_from,active_to) returns 409; `DELETE /api/dependencies` removes only the matching four-field tuple, leaving the other A→B entry intact; `PUT /api/dependencies` body includes `old_active_from`/`old_active_to` and `new_active_from`/`new_active_to`; `GET /api/dashboard` at-risk weeks for a date-bounded dependency are absent outside the active window
+- [x] T082 Update `POST /api/dependencies`, `DELETE /api/dependencies`, and `PUT /api/dependencies` routes in `absence_dashboard/app.py`: `POST` body reads optional `active_from` and `active_to` strings, passes them to `graph.add_edge`; `DELETE` body reads `active_from` and `active_to` to identify the specific tuple (default `None`), passes to `graph.remove_edge`; `PUT` body reads `old_active_from`, `old_active_to`, `new_active_from`, `new_active_to` — uses all four old fields to locate the existing entry via list comprehension, adds new edge with new date fields — confirm T081 now passes
+- [x] T083 [P] Update dependency management UI in `absence_dashboard/static/main.js`: (a) Add Dependency form — add two `<input type="date">` fields labelled "Active From" and "Active To" (both optional; hint text "optional"); include their values in the `POST /api/dependencies` body as `active_from` and `active_to` (send `null` if empty); (b) `renderDependencies()` — update display text to show date range when set (e.g., `"A → B (2026-06-01 – 2026-06-30)"`) and omit the parenthetical when both are null; (c) inline edit form — add pre-filled "Active From" / "Active To" `<input type="date">` fields alongside the existing dropdowns; include `old_active_from`, `old_active_to`, `new_active_from`, `new_active_to` in the `PUT` body; (d) remove button — include `active_from` and `active_to` from the displayed entry in the `DELETE` body
+
+**Checkpoint**: Date-bounded dependencies functional. At-risk indicators respect active windows.
+Multiple A→B entries with different date ranges coexist. Backwards-compatible with existing
+no-date dependencies.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -424,4 +449,4 @@ Phase 5 (US3) starts only after Phase 4 completes.
 - Commit after each phase checkpoint passes
 - `state/state.json` is created automatically on first run; delete it to reset all config
 - `tests/conftest.py` `sample_workbook` fixture must exactly mirror confirmed grid layout: Col C filter, Col D name, Col F+ dates starting 2026-04-27
-- Total tasks: **78** (T001–T076 complete ✅; T077–T078 added 2026-05-15 — today indicator per FR-026)
+- Total tasks: **83** (T001–T078 complete ✅; T079–T083 added 2026-05-15 — time-bounded dependencies per FR-005/FR-006/FR-007 update)

@@ -9,6 +9,10 @@
 
 ### Session 2026-05-15
 
+- Q: Should the dependency date interval be optional or required? → A: Optional — omitting both dates means the dependency is always active (indefinite); a date range is only provided when the collaboration window is known.
+- Q: Can one dependency have multiple separate date intervals? → A: No — one contiguous start–end range per dependency entry; multiple non-contiguous windows are expressed as separate dependency entries.
+- Q: Outside a dependency's active date range, what happens to the at-risk indicator? → A: No indicator shown — the dependency is inactive outside its window; affected calendar weeks render as if the dependency doesn't exist.
+- Q: With date intervals, what defines a duplicate dependency? → A: The tuple (from, to, start_date, end_date) is the unique key — the same (from, to) pair may appear multiple times with different date ranges; only an identical four-field tuple is rejected as a duplicate.
 - Q: Where should the red vertical line be positioned relative to today's day sub-column? → A: Left edge of today's day sub-column — line sits on the column's left border, separating past from present.
 - Q: If today is Saturday or Sunday, where should the today indicator appear? → A: Do not show the indicator — the line is hidden entirely on weekends.
 - Q: Should the today indicator include a text label? → A: Yes — a small "Today" label anchored in the CW/day header row above the line.
@@ -307,6 +311,11 @@ colors are unchanged.
 - All members are present during a project phase — the banner row still renders; phase visibility
   is independent of absence data.
 - The manager edits a dependency such that it would create a cycle — the edit row stays open with an inline cycle-detection error; the original dependency is unchanged (extends FR-007 to the edit path).
+- A dependency has `active_from` set but `active_to` omitted, or vice versa — both fields must be provided together or both omitted; a partially filled date range is rejected with an inline validation error.
+- A dependency's `active_from` date is later than its `active_to` date — rejected with an inline error; no data is saved.
+- Two A→B dependency entries exist with different date ranges — both are valid and both contribute at-risk indicators within their respective active windows; calendar weeks covered by either range show at-risk indicators.
+- A dependency's active date range falls entirely before the visible timeline start (current week) — the dependency is stored but produces no at-risk indicators in the visible range (no error shown).
+- The manager adds a second A→B entry with an identical (from, to, active_from, active_to) tuple — rejected as a duplicate with an inline error; the original entry is unchanged.
 - The manager edits a phase with an end date earlier than the start date — the edit row stays open with an inline date-range error; the original phase is unchanged.
 - The manager edits a cluster or phase name to one already used by another cluster or phase — the edit row stays open with an inline duplicate-name error; the original name is unchanged.
 - The manager edits a dependency to an (A→B) pair that already exists — the edit row stays open with an inline duplicate-dependency error; the original is unchanged.
@@ -323,12 +332,18 @@ colors are unchanged.
   name spelling are treated as a single person.
 - **FR-004**: The system MUST collect all absence periods across every Excel row for a given project member name and merge overlapping or adjacent periods into a single continuous visual block per merged span. A merged absence block MUST render as one unbroken bar across all absent day sub-columns, crossing week-column boundaries without visual interruption (e.g., an absence spanning Thu–Fri of CW22 and Mon–Wed of CW23 is displayed as a single connected bar, not two separate per-week blocks).
 - **FR-005**: The dashboard MUST provide a UI area where the manager can add, view, edit, and
-  remove directed dependencies between project members (A depends on B). Editing a dependency
-  expands its row inline with both the "from" and "to" person dropdowns editable; saving
-  atomically replaces the old dependency.
-- **FR-006**: The dashboard MUST visually mark a project member's entire calendar-week band (all 5 day sub-columns) with an at-risk indicator for any CW in which at least one day of the depended-on person's absence falls. The at-risk indicator is week-granular: a single absent day in a CW triggers the full-week at-risk highlight on the dependent's row.
+  remove directed dependencies between project members (A depends on B). Each dependency MAY
+  optionally include an active date range (`active_from` date, `active_to` date); when both
+  are omitted the dependency is active indefinitely. When provided, `active_from` ≤ `active_to`
+  is required. Editing a dependency expands its row inline with the "from" and "to" person
+  dropdowns and the optional date fields all editable; saving atomically replaces the old
+  dependency entry.
+- **FR-006**: The dashboard MUST visually mark a project member's entire calendar-week band (all 5 day sub-columns) with an at-risk indicator for any CW in which at least one day of the depended-on person's absence falls AND that calendar week overlaps with the dependency's active date range (if one is set). The at-risk indicator is week-granular: a single absent day in a CW triggers the full-week at-risk highlight on the dependent's row. Calendar weeks that fall entirely outside the dependency's `active_from`–`active_to` range MUST NOT show an at-risk indicator, even if the depended-on person is absent in those weeks.
 - **FR-007**: The system MUST detect dependency cycles and display a warning; cycle-creating
-  dependencies MUST NOT be saved.
+  dependencies MUST NOT be saved. Duplicate dependencies are identified by the four-field tuple
+  (from, to, active_from, active_to); a duplicate tuple MUST be rejected with an inline error.
+  Two entries with the same (from, to) pair but different date ranges are NOT duplicates and
+  MUST both be accepted.
 - **FR-008**: The system MUST automatically mark project members who are listed as a dependency
   by two or more other project members with a distinct bottleneck indicator.
 - **FR-009**: The dashboard MUST provide a UI area where the manager can add, edit, and remove
@@ -366,10 +381,11 @@ colors are unchanged.
   consistent inline row-expansion pattern for editing: clicking an Edit control on an existing
   item expands that row into editable fields in place; explicit Save and Cancel buttons appear
   within the expanded row; Save commits and collapses, Cancel discards and collapses.
-- **FR-023**: When an inline Save fails validation (dependency would create a cycle, phase end
-  date is before start date, cluster or phase name duplicates an existing one), the edit row
-  MUST remain open and display an inline error message below the affected field(s); no persisted
-  data is modified.
+- **FR-023**: When an inline Save fails validation (dependency would create a cycle; dependency
+  `active_from` is after `active_to`; identical (from, to, active_from, active_to) tuple already
+  exists; phase end date is before start date; cluster or phase name duplicates an existing one),
+  the edit row MUST remain open and display an inline error message below the affected field(s);
+  no persisted data is modified.
 - **FR-024**: When a SharePoint URL is provided as the CLI argument, the system MUST convert it
   to a direct download URL (by appending `?download=1` or equivalent SharePoint download
   parameter) and fetch the `.xlsx` file via an anonymous HTTP GET request using the `requests`
@@ -392,7 +408,10 @@ colors are unchanged.
   date inclusive); the source is individual day-columns in the Excel grid, not explicit date columns.
 - **Merged Absence Block**: The combined result of all overlapping/adjacent raw absence periods for a project member — a single non-overlapping span rendered as one unbroken visual bar across all constituent day sub-columns, crossing calendar-week column boundaries without interruption.
 - **Dependency**: A directed relationship (A → B) stored in the dashboard UI meaning "A is at
-  risk when B is absent." Cycles are prohibited.
+  risk when B is absent." Optionally bounded by an active date range (`active_from`, `active_to`,
+  both inclusive). When the date range is omitted the dependency is permanently active. When a
+  date range is set, at-risk indicators are only shown for calendar weeks that overlap the range.
+  Uniqueness key: (from, to, active_from, active_to). Cycles are prohibited.
 - **Bottleneck**: A project member who is the target of dependencies from two or more distinct
   other project members. Computed automatically from the dependency graph.
 - **Skill Cluster**: A named group of project members defined by the manager in the dashboard

@@ -732,3 +732,120 @@ class TestLastLoaded:
         data2 = client.post("/api/refresh").get_json()
         ll2 = data2["last_loaded"]
         assert ll2 >= ll1
+
+
+# ---------------------------------------------------------------------------
+# Time-bounded dependencies  (T081 / Phase 14)
+# ---------------------------------------------------------------------------
+
+class TestDateBoundedDependenciesAPI:
+    def test_post_with_date_range_returns_201(self, client):
+        rv = client.post("/api/dependencies", json={
+            "from_member": "Alice", "to_member": "Bob",
+            "active_from": "2026-06-01", "active_to": "2026-06-30",
+        })
+        assert rv.status_code == 201
+
+    def test_post_date_range_stored_on_entry(self, client):
+        client.post("/api/dependencies", json={
+            "from_member": "Alice", "to_member": "Bob",
+            "active_from": "2026-06-01", "active_to": "2026-06-30",
+        })
+        deps = client.get("/api/dependencies").get_json()["dependencies"]
+        match = next((d for d in deps if d["from_member"] == "Alice"), None)
+        assert match is not None
+        assert match["active_from"] == "2026-06-01"
+        assert match["active_to"] == "2026-06-30"
+
+    def test_post_only_active_from_returns_400(self, client):
+        rv = client.post("/api/dependencies", json={
+            "from_member": "Alice", "to_member": "Bob",
+            "active_from": "2026-06-01",
+        })
+        assert rv.status_code == 400
+
+    def test_post_active_from_after_active_to_returns_400(self, client):
+        rv = client.post("/api/dependencies", json={
+            "from_member": "Alice", "to_member": "Bob",
+            "active_from": "2026-07-01", "active_to": "2026-06-30",
+        })
+        assert rv.status_code == 400
+
+    def test_same_pair_different_date_ranges_both_accepted(self, client):
+        rv1 = client.post("/api/dependencies", json={
+            "from_member": "Alice", "to_member": "Bob",
+            "active_from": "2026-06-01", "active_to": "2026-06-30",
+        })
+        rv2 = client.post("/api/dependencies", json={
+            "from_member": "Alice", "to_member": "Bob",
+            "active_from": "2026-09-01", "active_to": "2026-09-30",
+        })
+        assert rv1.status_code == 201
+        assert rv2.status_code == 201
+        deps = client.get("/api/dependencies").get_json()["dependencies"]
+        alice_deps = [d for d in deps if d["from_member"] == "Alice"]
+        assert len(alice_deps) == 2
+
+    def test_identical_tuple_returns_409(self, client):
+        client.post("/api/dependencies", json={
+            "from_member": "Alice", "to_member": "Bob",
+            "active_from": "2026-06-01", "active_to": "2026-06-30",
+        })
+        rv = client.post("/api/dependencies", json={
+            "from_member": "Alice", "to_member": "Bob",
+            "active_from": "2026-06-01", "active_to": "2026-06-30",
+        })
+        assert rv.status_code == 409
+
+    def test_delete_removes_correct_tuple_only(self, client):
+        client.post("/api/dependencies", json={
+            "from_member": "Alice", "to_member": "Bob",
+            "active_from": "2026-06-01", "active_to": "2026-06-30",
+        })
+        client.post("/api/dependencies", json={
+            "from_member": "Alice", "to_member": "Bob",
+            "active_from": "2026-09-01", "active_to": "2026-09-30",
+        })
+        rv = client.delete("/api/dependencies", json={
+            "from_member": "Alice", "to_member": "Bob",
+            "active_from": "2026-06-01", "active_to": "2026-06-30",
+        })
+        assert rv.status_code == 200
+        deps = rv.get_json()["dependencies"]
+        alice_deps = [d for d in deps if d["from_member"] == "Alice"]
+        assert len(alice_deps) == 1
+        assert alice_deps[0]["active_from"] == "2026-09-01"
+
+    def test_dashboard_no_at_risk_outside_active_range(self, client):
+        # Alice depends on Bob, active only in June; Bob is absent in CW28 (Jul) in fixture
+        # The sample fixture has absence data — we just check at-risk weeks respect the range
+        client.post("/api/dependencies", json={
+            "from_member": "Alice", "to_member": "Bob",
+            "active_from": "2026-06-01", "active_to": "2026-06-30",
+        })
+        data = client.get("/api/dashboard").get_json()
+        alice = next((m for m in data["members"] if m["name"] == "Alice"), None)
+        if alice and alice["at_risk_weeks"]:
+            # All at-risk weeks must fall within June 2026 (CW23–CW26)
+            from datetime import date
+            import isoweek  # not available — use manual range check
+            for wk in alice["at_risk_weeks"]:
+                assert 23 <= wk <= 26, f"At-risk week {wk} is outside June 2026"
+
+    def test_put_dependency_with_dates_replaces_correctly(self, client):
+        client.post("/api/dependencies", json={
+            "from_member": "Alice", "to_member": "Bob",
+            "active_from": "2026-06-01", "active_to": "2026-06-30",
+        })
+        rv = client.put("/api/dependencies", json={
+            "old_from": "Alice", "old_to": "Bob",
+            "old_active_from": "2026-06-01", "old_active_to": "2026-06-30",
+            "new_from": "Alice", "new_to": "Carol",
+            "new_active_from": "2026-07-01", "new_active_to": "2026-07-31",
+        })
+        assert rv.status_code == 200
+        deps = rv.get_json()["dependencies"]
+        assert not any(d["from_member"] == "Alice" and d["to_member"] == "Bob" for d in deps)
+        new_dep = next(d for d in deps if d["from_member"] == "Alice")
+        assert new_dep["to_member"] == "Carol"
+        assert new_dep["active_from"] == "2026-07-01"
