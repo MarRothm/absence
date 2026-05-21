@@ -17,6 +17,8 @@
   --row-height:              32px;
   --name-col-width:          180px;
   --color-today-indicator:   #e53e3e;
+  --color-deadlock:          #8b0000;
+  --color-phase-deadlock:    rgba(192, 57, 43, 0.55);
 }
 
 /* -------------------------------------------------------------------------
@@ -460,4 +462,20 @@ body {
   font-weight: 700;
   letter-spacing: 0.3px;
   line-height: 1;
+}
+
+/* -------------------------------------------------------------------------
+   Deadlock visualization  (FR-005 / Phase 15)
+   ------------------------------------------------------------------------- */
+.tg-day-cell.deadlock {
+  background: var(--color-deadlock);
+  color: #fff;
+  font-size: 7px;
+  font-weight: 700;
+  overflow: hidden;
+}
+
+.tg-row.tg-phase-row.phase-has-deadlock .tg-day-cell.phase-active {
+  background: var(--color-phase-deadlock);
+  opacity: 1;
 }

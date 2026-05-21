@@ -127,9 +127,10 @@ class TestGetDashboard:
         data = client.get("/api/dashboard").get_json()
         assert data["dependencies"] == []
 
-    def test_initial_no_bottlenecks(self, client):
+    def test_initial_no_member_is_bottleneck(self, client):
         data = client.get("/api/dashboard").get_json()
-        assert data["bottlenecks"] == []
+        for m in data["members"]:
+            assert m["is_bottleneck"] is False
 
     def test_member_fields_present(self, client):
         data = client.get("/api/dashboard").get_json()
@@ -137,8 +138,7 @@ class TestGetDashboard:
             assert "name" in m
             assert "is_bottleneck" in m
             assert "merged_blocks" in m
-            assert "at_risk_weeks" in m
-            assert "depends_on" in m
+            assert "deadlock_weeks" in m
             assert "clusters" in m
 
 
@@ -147,59 +147,73 @@ class TestGetDashboard:
 # ---------------------------------------------------------------------------
 
 class TestPostDependencies:
-    def test_add_valid_dependency_returns_201(self, client):
+    def test_add_single_pool_returns_201(self, client):
         rv = client.post("/api/dependencies",
-                         json={"from_member": "Alice", "to_member": "Bob"})
+                         json={"from_member": "Alice", "to_members": ["Bob"]})
         assert rv.status_code == 201
 
-    def test_add_valid_dependency_in_response(self, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
+    def test_add_multi_pool_returns_201(self, client):
+        rv = client.post("/api/dependencies",
+                         json={"from_member": "Alice", "to_members": ["Bob", "Carol"]})
+        assert rv.status_code == 201
+
+    def test_add_dependency_appears_in_response(self, client):
+        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
         data = client.get("/api/dashboard").get_json()
-        assert {"from_member": "Alice", "to_member": "Bob"} in data["dependencies"]
+        deps = data["dependencies"]
+        assert any(
+            d["from_member"] == "Alice" and d["to_members"] == ["Bob"]
+            for d in deps
+        )
 
     def test_unknown_source_returns_400(self, client):
         rv = client.post("/api/dependencies",
-                         json={"from_member": "Unknown", "to_member": "Bob"})
+                         json={"from_member": "Unknown", "to_members": ["Bob"]})
         assert rv.status_code == 400
 
-    def test_unknown_target_returns_400(self, client):
+    def test_unknown_pool_member_returns_400(self, client):
         rv = client.post("/api/dependencies",
-                         json={"from_member": "Alice", "to_member": "Unknown"})
+                         json={"from_member": "Alice", "to_members": ["Unknown"]})
         assert rv.status_code == 400
 
-    def test_cycle_returns_409(self, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
-        rv = client.post("/api/dependencies", json={"from_member": "Bob", "to_member": "Alice"})
-        assert rv.status_code == 409
-        assert "cycle" in rv.get_json().get("error", "").lower()
+    def test_empty_pool_returns_400(self, client):
+        rv = client.post("/api/dependencies",
+                         json={"from_member": "Alice", "to_members": []})
+        assert rv.status_code == 400
 
     def test_duplicate_returns_409(self, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
-        rv = client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
+        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
+        rv = client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
         assert rv.status_code == 409
 
     def test_state_persisted_after_add(self, app, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
+        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
         state = app.config["STATE"]
-        assert {"from_member": "Alice", "to_member": "Bob"} in state.dependencies
+        assert any(
+            d["from_member"] == "Alice" and d["to_members"] == ["Bob"]
+            for d in state.dependencies
+        )
 
 
 class TestDeleteDependencies:
     def test_delete_existing_returns_200(self, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
+        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
         rv = client.delete("/api/dependencies",
-                           json={"from_member": "Alice", "to_member": "Bob"})
+                           json={"from_member": "Alice", "to_members": ["Bob"]})
         assert rv.status_code == 200
 
     def test_delete_removes_from_state(self, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
-        client.delete("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
+        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
+        client.delete("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
         data = client.get("/api/dashboard").get_json()
-        assert {"from_member": "Alice", "to_member": "Bob"} not in data["dependencies"]
+        assert not any(
+            d["from_member"] == "Alice" and "Bob" in d["to_members"]
+            for d in data["dependencies"]
+        )
 
     def test_delete_nonexistent_returns_404(self, client):
         rv = client.delete("/api/dependencies",
-                           json={"from_member": "Alice", "to_member": "Bob"})
+                           json={"from_member": "Alice", "to_members": ["Bob"]})
         assert rv.status_code == 404
 
 
@@ -208,27 +222,25 @@ class TestDeleteDependencies:
 # ---------------------------------------------------------------------------
 
 class TestBottleneck:
-    def test_member_with_two_incoming_marked_bottleneck(self, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
-        client.post("/api/dependencies", json={"from_member": "Carol", "to_member": "Bob"})
+    def test_sole_satisfier_is_bottleneck(self, client):
+        # Alice depends on [Bob] only; Bob is present in most CWs → sole satisfier → weight > 0
+        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
         data = client.get("/api/dashboard").get_json()
-        assert "Bob" in data["bottlenecks"]
         bob = get_member(data, "Bob")
         assert bob["is_bottleneck"] is True
 
-    def test_member_with_one_incoming_not_bottleneck(self, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
+    def test_shared_pool_not_bottleneck_for_both_present(self, client):
+        # Alice→[Bob, Carol]; Carol always present, Bob too (most CWs) → neither sole satisfier
+        client.post("/api/dependencies",
+                    json={"from_member": "Alice", "to_members": ["Bob", "Carol"]})
         data = client.get("/api/dashboard").get_json()
-        assert "Bob" not in data["bottlenecks"]
+        bob = get_member(data, "Bob")
+        assert bob["is_bottleneck"] is False
 
-    def test_alice_carol_not_bottleneck_when_bob_is(self, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
-        client.post("/api/dependencies", json={"from_member": "Carol", "to_member": "Bob"})
+    def test_no_deps_no_bottleneck(self, client):
         data = client.get("/api/dashboard").get_json()
-        alice = get_member(data, "Alice")
-        carol = get_member(data, "Carol")
-        assert alice["is_bottleneck"] is False
-        assert carol["is_bottleneck"] is False
+        for m in data["members"]:
+            assert m["is_bottleneck"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -331,10 +343,13 @@ class TestRefresh:
         assert rv.status_code == 200
 
     def test_refresh_preserves_dependencies(self, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
+        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
         client.post("/api/refresh")
         data = client.get("/api/dashboard").get_json()
-        assert {"from_member": "Alice", "to_member": "Bob"} in data["dependencies"]
+        assert any(
+            d["from_member"] == "Alice" and d["to_members"] == ["Bob"]
+            for d in data["dependencies"]
+        )
 
     def test_refresh_preserves_clusters(self, client):
         client.post("/api/clusters", json={"name": "Backend", "members": ["Alice"]})
@@ -345,7 +360,7 @@ class TestRefresh:
 
     def test_refresh_stale_dependency_removed(self, app, client, tmp_path):
         # Add a dependency, then replace the Excel with a file that has no "Alice"
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
+        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
         # Build a minimal workbook with only Bob and Carol
         from openpyxl import Workbook
         wb = Workbook()
@@ -364,7 +379,9 @@ class TestRefresh:
         result = rv.get_json()
         assert len(result.get("removed_stale_references", [])) > 0
         data = client.get("/api/dashboard").get_json()
-        assert {"from_member": "Alice", "to_member": "Bob"} not in data["dependencies"]
+        assert not any(
+            d["from_member"] == "Alice" for d in data["dependencies"]
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -482,60 +499,63 @@ class TestRefreshPreservesPhases:
 
 class TestPutDependencies:
     def test_valid_replace_returns_200(self, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
+        client.post("/api/dependencies",
+                    json={"from_member": "Alice", "to_members": ["Bob"]})
         rv = client.put("/api/dependencies",
-                        json={"old_from": "Alice", "old_to": "Bob",
-                              "new_from": "Alice", "new_to": "Carol"})
+                        json={"old_from": "Alice", "old_to_members": ["Bob"],
+                              "new_from": "Alice", "new_to_members": ["Carol"]})
         assert rv.status_code == 200
 
     def test_valid_replace_updates_list(self, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
+        client.post("/api/dependencies",
+                    json={"from_member": "Alice", "to_members": ["Bob"]})
         client.put("/api/dependencies",
-                   json={"old_from": "Alice", "old_to": "Bob",
-                         "new_from": "Alice", "new_to": "Carol"})
+                   json={"old_from": "Alice", "old_to_members": ["Bob"],
+                         "new_from": "Alice", "new_to_members": ["Carol"]})
         data = client.get("/api/dependencies").get_json()
         deps = data["dependencies"]
-        assert {"from_member": "Alice", "to_member": "Carol"} in deps
-        assert {"from_member": "Alice", "to_member": "Bob"} not in deps
+        assert any(d["from_member"] == "Alice" and d["to_members"] == ["Carol"] for d in deps)
+        assert not any(d["from_member"] == "Alice" and d["to_members"] == ["Bob"] for d in deps)
 
     def test_old_pair_not_found_returns_404(self, client):
         rv = client.put("/api/dependencies",
-                        json={"old_from": "Alice", "old_to": "Bob",
-                              "new_from": "Alice", "new_to": "Carol"})
+                        json={"old_from": "Alice", "old_to_members": ["Bob"],
+                              "new_from": "Alice", "new_to_members": ["Carol"]})
         assert rv.status_code == 404
 
-    def test_cycle_returns_409(self, client):
-        # Bob→Carol exists; replacing Alice→Bob with Carol→Bob creates Bob→Carol + Carol→Bob cycle
-        client.post("/api/dependencies", json={"from_member": "Bob", "to_member": "Carol"})
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
-        rv = client.put("/api/dependencies",
-                        json={"old_from": "Alice", "old_to": "Bob",
-                              "new_from": "Carol", "new_to": "Bob"})
-        assert rv.status_code == 409
-
     def test_duplicate_new_pair_returns_409(self, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
-        client.post("/api/dependencies", json={"from_member": "Carol", "to_member": "Bob"})
+        client.post("/api/dependencies",
+                    json={"from_member": "Alice", "to_members": ["Bob"]})
+        client.post("/api/dependencies",
+                    json={"from_member": "Carol", "to_members": ["Bob"]})
         rv = client.put("/api/dependencies",
-                        json={"old_from": "Alice", "old_to": "Bob",
-                              "new_from": "Carol", "new_to": "Bob"})
+                        json={"old_from": "Carol", "old_to_members": ["Bob"],
+                              "new_from": "Alice", "new_to_members": ["Bob"]})
         assert rv.status_code == 409
 
     def test_invalid_member_returns_400(self, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
+        client.post("/api/dependencies",
+                    json={"from_member": "Alice", "to_members": ["Bob"]})
         rv = client.put("/api/dependencies",
-                        json={"old_from": "Alice", "old_to": "Bob",
-                              "new_from": "Alice", "new_to": "Unknown"})
+                        json={"old_from": "Alice", "old_to_members": ["Bob"],
+                              "new_from": "Alice", "new_to_members": ["Unknown"]})
         assert rv.status_code == 400
 
     def test_state_persisted_after_replace(self, app, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_member": "Bob"})
+        client.post("/api/dependencies",
+                    json={"from_member": "Alice", "to_members": ["Bob"]})
         client.put("/api/dependencies",
-                   json={"old_from": "Alice", "old_to": "Bob",
-                         "new_from": "Alice", "new_to": "Carol"})
+                   json={"old_from": "Alice", "old_to_members": ["Bob"],
+                         "new_from": "Alice", "new_to_members": ["Carol"]})
         state = app.config["STATE"]
-        assert {"from_member": "Alice", "to_member": "Carol"} in state.dependencies
-        assert {"from_member": "Alice", "to_member": "Bob"} not in state.dependencies
+        assert any(
+            d["from_member"] == "Alice" and d["to_members"] == ["Carol"]
+            for d in state.dependencies
+        )
+        assert not any(
+            d["from_member"] == "Alice" and d["to_members"] == ["Bob"]
+            for d in state.dependencies
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -735,20 +755,19 @@ class TestLastLoaded:
 
 
 # ---------------------------------------------------------------------------
-# Time-bounded dependencies  (T081 / Phase 14)
+# Pool-based dependencies  (T086 / Phase 15)
 # ---------------------------------------------------------------------------
 
-class TestDateBoundedDependenciesAPI:
-    def test_post_with_date_range_returns_201(self, client):
+class TestPoolDependenciesAPI:
+    def test_post_multi_pool_returns_201(self, client):
         rv = client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_member": "Bob",
-            "active_from": "2026-06-01", "active_to": "2026-06-30",
+            "from_member": "Alice", "to_members": ["Bob", "Carol"],
         })
         assert rv.status_code == 201
 
-    def test_post_date_range_stored_on_entry(self, client):
+    def test_post_date_range_stored_on_pool_entry(self, client):
         client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_member": "Bob",
+            "from_member": "Alice", "to_members": ["Bob"],
             "active_from": "2026-06-01", "active_to": "2026-06-30",
         })
         deps = client.get("/api/dependencies").get_json()["dependencies"]
@@ -759,25 +778,25 @@ class TestDateBoundedDependenciesAPI:
 
     def test_post_only_active_from_returns_400(self, client):
         rv = client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_member": "Bob",
+            "from_member": "Alice", "to_members": ["Bob"],
             "active_from": "2026-06-01",
         })
         assert rv.status_code == 400
 
     def test_post_active_from_after_active_to_returns_400(self, client):
         rv = client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_member": "Bob",
+            "from_member": "Alice", "to_members": ["Bob"],
             "active_from": "2026-07-01", "active_to": "2026-06-30",
         })
         assert rv.status_code == 400
 
-    def test_same_pair_different_date_ranges_both_accepted(self, client):
+    def test_same_pool_different_date_ranges_both_accepted(self, client):
         rv1 = client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_member": "Bob",
+            "from_member": "Alice", "to_members": ["Bob"],
             "active_from": "2026-06-01", "active_to": "2026-06-30",
         })
         rv2 = client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_member": "Bob",
+            "from_member": "Alice", "to_members": ["Bob"],
             "active_from": "2026-09-01", "active_to": "2026-09-30",
         })
         assert rv1.status_code == 201
@@ -786,28 +805,28 @@ class TestDateBoundedDependenciesAPI:
         alice_deps = [d for d in deps if d["from_member"] == "Alice"]
         assert len(alice_deps) == 2
 
-    def test_identical_tuple_returns_409(self, client):
+    def test_identical_pool_tuple_returns_409(self, client):
         client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_member": "Bob",
+            "from_member": "Alice", "to_members": ["Bob"],
             "active_from": "2026-06-01", "active_to": "2026-06-30",
         })
         rv = client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_member": "Bob",
+            "from_member": "Alice", "to_members": ["Bob"],
             "active_from": "2026-06-01", "active_to": "2026-06-30",
         })
         assert rv.status_code == 409
 
-    def test_delete_removes_correct_tuple_only(self, client):
+    def test_delete_removes_correct_pool_tuple_only(self, client):
         client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_member": "Bob",
+            "from_member": "Alice", "to_members": ["Bob"],
             "active_from": "2026-06-01", "active_to": "2026-06-30",
         })
         client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_member": "Bob",
+            "from_member": "Alice", "to_members": ["Bob"],
             "active_from": "2026-09-01", "active_to": "2026-09-30",
         })
         rv = client.delete("/api/dependencies", json={
-            "from_member": "Alice", "to_member": "Bob",
+            "from_member": "Alice", "to_members": ["Bob"],
             "active_from": "2026-06-01", "active_to": "2026-06-30",
         })
         assert rv.status_code == 200
@@ -816,36 +835,51 @@ class TestDateBoundedDependenciesAPI:
         assert len(alice_deps) == 1
         assert alice_deps[0]["active_from"] == "2026-09-01"
 
-    def test_dashboard_no_at_risk_outside_active_range(self, client):
-        # Alice depends on Bob, active only in June; Bob is absent in CW28 (Jul) in fixture
-        # The sample fixture has absence data — we just check at-risk weeks respect the range
-        client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_member": "Bob",
-            "active_from": "2026-06-01", "active_to": "2026-06-30",
-        })
+    def test_dashboard_has_deadlock_weeks_not_at_risk(self, client):
         data = client.get("/api/dashboard").get_json()
-        alice = next((m for m in data["members"] if m["name"] == "Alice"), None)
-        if alice and alice["at_risk_weeks"]:
-            # All at-risk weeks must fall within June 2026 (CW23–CW26)
-            from datetime import date
-            import isoweek  # not available — use manual range check
-            for wk in alice["at_risk_weeks"]:
-                assert 23 <= wk <= 26, f"At-risk week {wk} is outside June 2026"
+        for m in data["members"]:
+            assert "deadlock_weeks" in m
+            assert "at_risk_weeks" not in m
 
-    def test_put_dependency_with_dates_replaces_correctly(self, client):
+    def test_dashboard_deadlock_weeks_field_present(self, client):
+        # deadlock_weeks must be present and a list for every member
+        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
+        data = client.get("/api/dashboard").get_json()
+        for m in data["members"]:
+            assert isinstance(m["deadlock_weeks"], list)
+
+    def test_dashboard_no_deadlock_when_partial_pool_absent(self, client):
+        # Alice→[Bob, Carol]; Carol has no absences → never deadlock
+        client.post("/api/dependencies",
+                    json={"from_member": "Alice", "to_members": ["Bob", "Carol"]})
+        data = client.get("/api/dashboard").get_json()
+        alice = next(m for m in data["members"] if m["name"] == "Alice")
+        assert alice["deadlock_weeks"] == []
+
+    def test_is_bottleneck_sole_satisfier(self, client):
+        # Alice→[Bob]: Bob present in most CWs → weight > 0 → is_bottleneck=true
+        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
+        data = client.get("/api/dashboard").get_json()
+        bob = next(m for m in data["members"] if m["name"] == "Bob")
+        assert bob["is_bottleneck"] is True
+
+    def test_put_pool_dependency_replaces_correctly(self, client):
         client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_member": "Bob",
+            "from_member": "Alice", "to_members": ["Bob"],
             "active_from": "2026-06-01", "active_to": "2026-06-30",
         })
         rv = client.put("/api/dependencies", json={
-            "old_from": "Alice", "old_to": "Bob",
+            "old_from": "Alice", "old_to_members": ["Bob"],
             "old_active_from": "2026-06-01", "old_active_to": "2026-06-30",
-            "new_from": "Alice", "new_to": "Carol",
+            "new_from": "Alice", "new_to_members": ["Carol"],
             "new_active_from": "2026-07-01", "new_active_to": "2026-07-31",
         })
         assert rv.status_code == 200
         deps = rv.get_json()["dependencies"]
-        assert not any(d["from_member"] == "Alice" and d["to_member"] == "Bob" for d in deps)
+        assert not any(
+            d["from_member"] == "Alice" and "Bob" in d["to_members"]
+            for d in deps
+        )
         new_dep = next(d for d in deps if d["from_member"] == "Alice")
-        assert new_dep["to_member"] == "Carol"
+        assert new_dep["to_members"] == ["Carol"]
         assert new_dep["active_from"] == "2026-07-01"

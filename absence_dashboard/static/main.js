@@ -67,7 +67,7 @@ function buildDayIndex(weeks) {
 
 // For each day in dayIndex, compute the absence CSS class for this member.
 // Returns a map: date-string → class string (or "")
-function computeDayClasses(mergedBlocks, dayIndex, isBottleneck, atRiskWeeks) {
+function computeDayClasses(mergedBlocks, dayIndex, deadlockWeeks) {
   const absentDates = new Set();
   mergedBlocks.forEach(block => {
     dayIndex.forEach(({ date }) => {
@@ -75,29 +75,22 @@ function computeDayClasses(mergedBlocks, dayIndex, isBottleneck, atRiskWeeks) {
     });
   });
 
+  const deadlockWeekSet = new Set(deadlockWeeks || []);
   const result = {};
   dayIndex.forEach(({ date: d, week }, i) => {
     const prev = i > 0 ? dayIndex[i - 1].date : null;
     const next = i < dayIndex.length - 1 ? dayIndex[i + 1].date : null;
     const absent = absentDates.has(d);
-    const atRisk = atRiskWeeks.includes(week);
 
-    if (absent) {
+    if (deadlockWeekSet.has(week)) {
+      result[d] = "deadlock";
+    } else if (absent) {
       const prevAbsent = prev && absentDates.has(prev);
       const nextAbsent = next && absentDates.has(next);
-      if (isBottleneck) {
-        if (!prevAbsent && !nextAbsent) result[d] = "bottleneck-absent ba-single";
-        else if (!prevAbsent)           result[d] = "bottleneck-absent ba-start";
-        else if (!nextAbsent)           result[d] = "bottleneck-absent ba-end";
-        else                            result[d] = "bottleneck-absent ba-mid";
-      } else {
-        if (!prevAbsent && !nextAbsent) result[d] = "absent ab-single";
-        else if (!prevAbsent)           result[d] = "absent ab-start";
-        else if (!nextAbsent)           result[d] = "absent ab-end";
-        else                            result[d] = "absent ab-mid";
-      }
-    } else if (atRisk) {
-      result[d] = "at-risk";
+      if (!prevAbsent && !nextAbsent) result[d] = "absent ab-single";
+      else if (!prevAbsent)           result[d] = "absent ab-start";
+      else if (!nextAbsent)           result[d] = "absent ab-end";
+      else                            result[d] = "absent ab-mid";
     } else {
       result[d] = "";
     }
@@ -150,9 +143,20 @@ function renderTimeline(data) {
   grid.appendChild(dayHeaderRow);
 
   // ---- Phase banner rows (one per phase, overlapping phases stack) ----
+  const deadlockWeekSet = new Set(
+    data.members.flatMap(m => m.deadlock_weeks || [])
+  );
+
   (data.phases || []).forEach(phase => {
     const row = document.createElement("div");
     row.className = "tg-row tg-phase-row";
+
+    // Mark phase row if any of its days fall in a deadlock CW
+    const phaseHasDeadlock = dayIndex.some(
+      ({ date: d, week }) =>
+        d >= phase.start_date && d <= phase.end_date && deadlockWeekSet.has(week)
+    );
+    if (phaseHasDeadlock) row.classList.add("phase-has-deadlock");
 
     const nameCell = document.createElement("div");
     nameCell.className = "tg-name";
@@ -212,8 +216,9 @@ function renderTimeline(data) {
     row.appendChild(nameCellEl);
 
     const dayClasses = computeDayClasses(
-      member.merged_blocks, dayIndex, member.is_bottleneck, member.at_risk_weeks
+      member.merged_blocks, dayIndex, member.deadlock_weeks
     );
+    const memberDeadlockWeekSet = new Set(member.deadlock_weeks || []);
 
     dayIndex.forEach(({ date: d, week }, i) => {
       const cell = document.createElement("div");
@@ -221,13 +226,16 @@ function renderTimeline(data) {
       const cls = dayClasses[d];
       if (cls) cls.split(" ").forEach(c => cell.classList.add(c));
 
-      // Week-boundary separator (first day of a week gets a left border marker)
       if (i % 5 === 0) cell.classList.add("week-start");
 
-      if (cls.includes("absent") || cls.includes("bottleneck-absent")) {
-        cell.title = d;
-      } else if (cls === "at-risk") {
-        cell.title = `At risk CW${week}: depends on ${member.depends_on.join(", ")}`;
+      if (cls === "deadlock") {
+        cell.title = `Deadlock CW${week}: all pool members absent`;
+        if (i % 5 === 0) {
+          const label = document.createElement("span");
+          label.className = "deadlock-label";
+          label.textContent = "Deadlock";
+          cell.appendChild(label);
+        }
       } else {
         cell.title = d;
       }
@@ -322,20 +330,32 @@ function renderDependencies(data) {
   const list    = document.getElementById("dep-list");
   const names   = data.members.map(m => m.name).sort();
 
-  [fromSel, toSel].forEach(sel => {
-    const current = sel.value;
-    sel.innerHTML = `<option value="">— select —</option>`;
-    names.forEach(n => {
-      const opt = document.createElement("option");
-      opt.value = opt.textContent = n;
-      if (n === current) opt.selected = true;
-      sel.appendChild(opt);
-    });
+  // Refresh "from" single-select
+  const currentFrom = fromSel.value;
+  fromSel.innerHTML = `<option value="">— select —</option>`;
+  names.forEach(n => {
+    const opt = document.createElement("option");
+    opt.value = opt.textContent = n;
+    if (n === currentFrom) opt.selected = true;
+    fromSel.appendChild(opt);
+  });
+
+  // Refresh "to" multi-select (preserve current selections)
+  const currentTo = new Set(
+    Array.from(toSel.selectedOptions).map(o => o.value)
+  );
+  toSel.innerHTML = "";
+  names.forEach(n => {
+    const opt = document.createElement("option");
+    opt.value = opt.textContent = n;
+    if (currentTo.has(n)) opt.selected = true;
+    toSel.appendChild(opt);
   });
 
   list.innerHTML = "";
   data.dependencies.forEach(dep => {
     const li = document.createElement("li");
+    const toLabel = (dep.to_members || []).join(", ");
 
     // --- display view ---
     const displayDiv = document.createElement("div");
@@ -344,7 +364,7 @@ function renderDependencies(data) {
       ? ` (${dep.active_from} – ${dep.active_to})`
       : "";
     displayDiv.innerHTML =
-      `<span>${dep.from_member} → ${dep.to_member}<span class="cluster-item-members">${rangeText}</span></span>`;
+      `<span>${dep.from_member} → ${toLabel}<span class="cluster-item-members">${rangeText}</span></span>`;
 
     const editBtn = document.createElement("button");
     editBtn.className = "btn-edit";
@@ -356,7 +376,7 @@ function renderDependencies(data) {
     removeBtn.textContent = "✕";
     removeBtn.title = "Remove dependency";
     removeBtn.onclick = async () => {
-      const body = { from_member: dep.from_member, to_member: dep.to_member };
+      const body = { from_member: dep.from_member, to_members: dep.to_members };
       if (dep.active_from) { body.active_from = dep.active_from; body.active_to = dep.active_to; }
       const res = await apiFetch("/api/dependencies", "DELETE", body);
       if (res.ok) { await refreshDashboard(); } else {
@@ -373,7 +393,16 @@ function renderDependencies(data) {
     const newFromSel = makeSelect(names, dep.from_member, "edit-select");
     const arrow = document.createElement("span");
     arrow.textContent = " → ";
-    const newToSel = makeSelect(names, dep.to_member, "edit-select");
+
+    const newToSel = document.createElement("select");
+    newToSel.multiple = true;
+    newToSel.className = "edit-select-multi";
+    names.forEach(n => {
+      const opt = document.createElement("option");
+      opt.value = opt.textContent = n;
+      if ((dep.to_members || []).includes(n)) opt.selected = true;
+      newToSel.appendChild(opt);
+    });
 
     const newActiveFrom = document.createElement("input");
     newActiveFrom.type = "date";
@@ -406,15 +435,22 @@ function renderDependencies(data) {
     };
     cancelBtn.onclick = () => {
       clearInlineError(editDiv);
+      Array.from(newToSel.options).forEach(o => {
+        o.selected = (dep.to_members || []).includes(o.value);
+      });
       displayDiv.classList.remove("hidden");
       editDiv.classList.add("hidden");
     };
     saveBtn.onclick = async () => {
       clearInlineError(editDiv);
+      const newToMembers = Array.from(newToSel.selectedOptions).map(o => o.value);
       const body = {
-        old_from: dep.from_member, old_to: dep.to_member,
-        old_active_from: dep.active_from || null, old_active_to: dep.active_to || null,
-        new_from: newFromSel.value, new_to: newToSel.value,
+        old_from: dep.from_member,
+        old_to_members: dep.to_members,
+        old_active_from: dep.active_from || null,
+        old_active_to: dep.active_to || null,
+        new_from: newFromSel.value,
+        new_to_members: newToMembers,
         new_active_from: newActiveFrom.value || null,
         new_active_to: newActiveTo.value || null,
       };
@@ -434,13 +470,15 @@ function renderDependencies(data) {
 
 document.getElementById("btn-add-dep").addEventListener("click", async () => {
   const from       = document.getElementById("dep-from").value;
-  const to         = document.getElementById("dep-to").value;
+  const toMembers  = Array.from(
+    document.getElementById("dep-to").selectedOptions
+  ).map(o => o.value);
   const activeFrom = document.getElementById("dep-active-from").value || null;
   const activeTo   = document.getElementById("dep-active-to").value || null;
   const errEl = document.getElementById("dep-error");
   errEl.classList.add("hidden");
-  if (!from || !to) return;
-  const body = { from_member: from, to_member: to };
+  if (!from || toMembers.length === 0) return;
+  const body = { from_member: from, to_members: toMembers };
   if (activeFrom) { body.active_from = activeFrom; body.active_to = activeTo; }
   const res = await apiFetch("/api/dependencies", "POST", body);
   if (res.ok) {

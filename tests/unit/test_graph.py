@@ -1,227 +1,246 @@
 """
-TDD: Tests for absence_dashboard/graph.py
+TDD: Tests for absence_dashboard/graph.py (pool-based dependency model)
 """
 import pytest
 from datetime import date
 
-from absence_dashboard.graph import DependencyGraph, CycleError
-from absence_dashboard.merger import AbsencePeriod
+from absence_dashboard.graph import DependencyGraph
 
 
 MEMBERS = {"Alice", "Bob", "Carol", "Dave", "Eve"}
 
+CW19 = {
+    "year": 2026,
+    "week_number": 19,
+    "label": "CW19",
+    "start": "2026-05-04",
+    "end": "2026-05-08",
+    "days": ["2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07", "2026-05-08"],
+}
 
-class TestAddEdge:
-    def test_add_valid_edge(self):
-        g = DependencyGraph()
-        g.add_edge("Alice", "Bob", MEMBERS)
-        assert {"from_member": "Alice", "to_member": "Bob"} in g.edges()
+CW24 = {
+    "year": 2026,
+    "week_number": 24,
+    "label": "CW24",
+    "start": "2026-06-08",
+    "end": "2026-06-12",
+    "days": ["2026-06-08", "2026-06-09", "2026-06-10", "2026-06-11", "2026-06-12"],
+}
 
-    def test_self_loop_rejected(self):
-        g = DependencyGraph()
-        with pytest.raises(ValueError, match="Self"):
-            g.add_edge("Alice", "Alice", MEMBERS)
 
-    def test_duplicate_edge_rejected(self):
+class TestPoolDependency:
+    # ------------------------------------------------------------------ add --
+
+    def test_add_single_pool_member(self):
         g = DependencyGraph()
-        g.add_edge("Alice", "Bob", MEMBERS)
+        g.add_dependency("Alice", ["Bob"], MEMBERS)
+        deps = g.edges()
+        assert len(deps) == 1
+        assert deps[0]["from_member"] == "Alice"
+        assert deps[0]["to_members"] == ["Bob"]
+
+    def test_add_multi_member_pool(self):
+        g = DependencyGraph()
+        g.add_dependency("Alice", ["Bob", "Carol"], MEMBERS)
+        deps = g.edges()
+        assert len(deps) == 1
+        assert set(deps[0]["to_members"]) == {"Bob", "Carol"}
+
+    def test_duplicate_pool_different_order_rejected(self):
+        # uniqueness key is frozenset(to_members), so order does not matter
+        g = DependencyGraph()
+        g.add_dependency("Alice", ["Bob", "Carol"], MEMBERS)
         with pytest.raises(ValueError, match="already exists"):
-            g.add_edge("Alice", "Bob", MEMBERS)
+            g.add_dependency("Alice", ["Carol", "Bob"], MEMBERS)
 
-    def test_unknown_source_rejected(self):
+    def test_empty_pool_rejected(self):
+        g = DependencyGraph()
+        with pytest.raises(ValueError):
+            g.add_dependency("Alice", [], MEMBERS)
+
+    def test_unknown_from_member_rejected(self):
         g = DependencyGraph()
         with pytest.raises(ValueError, match="not in loaded dataset"):
-            g.add_edge("Unknown", "Bob", MEMBERS)
+            g.add_dependency("Unknown", ["Bob"], MEMBERS)
 
-    def test_unknown_target_rejected(self):
+    def test_unknown_member_in_pool_rejected(self):
         g = DependencyGraph()
         with pytest.raises(ValueError, match="not in loaded dataset"):
-            g.add_edge("Alice", "Unknown", MEMBERS)
+            g.add_dependency("Alice", ["Bob", "Unknown"], MEMBERS)
 
-    def test_direct_cycle_rejected(self):
+    def test_add_with_date_range_stores_dates(self):
         g = DependencyGraph()
-        g.add_edge("Alice", "Bob", MEMBERS)
-        with pytest.raises(CycleError):
-            g.add_edge("Bob", "Alice", MEMBERS)
+        g.add_dependency("Alice", ["Bob"], MEMBERS,
+                         active_from="2026-06-01", active_to="2026-06-30")
+        dep = g.edges()[0]
+        assert dep["active_from"] == "2026-06-01"
+        assert dep["active_to"] == "2026-06-30"
 
-    def test_indirect_cycle_rejected(self):
+    def test_add_without_dates_omits_date_fields(self):
         g = DependencyGraph()
-        g.add_edge("Alice", "Bob", MEMBERS)
-        g.add_edge("Bob", "Carol", MEMBERS)
-        with pytest.raises(CycleError):
-            g.add_edge("Carol", "Alice", MEMBERS)
-
-
-class TestRemoveEdge:
-    def test_remove_existing_edge(self):
-        g = DependencyGraph()
-        g.add_edge("Alice", "Bob", MEMBERS)
-        g.remove_edge("Alice", "Bob")
-        assert g.edges() == []
-
-    def test_remove_nonexistent_edge_raises(self):
-        g = DependencyGraph()
-        with pytest.raises(KeyError):
-            g.remove_edge("Alice", "Bob")
-
-
-class TestGetBottlenecks:
-    def test_member_with_two_incoming_is_bottleneck(self):
-        edges = [
-            {"from_member": "Alice", "to_member": "Bob"},
-            {"from_member": "Carol", "to_member": "Bob"},
-        ]
-        assert "Bob" in DependencyGraph.get_bottlenecks(edges)
-
-    def test_member_with_one_incoming_is_not_bottleneck(self):
-        edges = [{"from_member": "Alice", "to_member": "Bob"}]
-        assert "Bob" not in DependencyGraph.get_bottlenecks(edges)
-
-    def test_member_with_zero_incoming_is_not_bottleneck(self):
-        edges = [{"from_member": "Alice", "to_member": "Bob"}]
-        assert "Alice" not in DependencyGraph.get_bottlenecks(edges)
-
-    def test_empty_edges_returns_empty_set(self):
-        assert DependencyGraph.get_bottlenecks([]) == set()
-
-    def test_three_incoming_is_bottleneck(self):
-        edges = [
-            {"from_member": "A", "to_member": "Bob"},
-            {"from_member": "B", "to_member": "Bob"},
-            {"from_member": "C", "to_member": "Bob"},
-        ]
-        assert "Bob" in DependencyGraph.get_bottlenecks(edges)
-
-
-class TestComputeAtRiskWeeks:
-    def _make_cw(self, week_number, start_str, end_str):
-        return {
-            "year": 2026,
-            "week_number": week_number,
-            "label": f"CW{week_number}",
-            "start": start_str,
-            "end": end_str,
-        }
-
-    def test_at_risk_when_dependency_absent(self):
-        edges = [{"from_member": "Alice", "to_member": "Bob"}]
-        bob_blocks = [AbsencePeriod(date(2026, 5, 4), date(2026, 5, 8))]
-        member_blocks_map = {"Bob": bob_blocks, "Alice": []}
-        cws = [self._make_cw(19, "2026-05-04", "2026-05-08")]
-
-        result = DependencyGraph.compute_at_risk_weeks("Alice", edges, member_blocks_map, cws)
-        assert 19 in result
-
-    def test_not_at_risk_when_dependency_present(self):
-        edges = [{"from_member": "Alice", "to_member": "Bob"}]
-        member_blocks_map = {"Bob": [], "Alice": []}
-        cws = [{"year": 2026, "week_number": 19, "label": "CW19",
-                "start": "2026-05-04", "end": "2026-05-08"}]
-
-        result = DependencyGraph.compute_at_risk_weeks("Alice", edges, member_blocks_map, cws)
-        assert 19 not in result
-
-    def test_no_dependencies_returns_empty(self):
-        result = DependencyGraph.compute_at_risk_weeks("Alice", [], {}, [])
-        assert result == []
-
-    def test_at_risk_week_partial_overlap(self):
-        # Absence starts mid-week — still at risk that week
-        edges = [{"from_member": "Alice", "to_member": "Bob"}]
-        bob_blocks = [AbsencePeriod(date(2026, 5, 6), date(2026, 5, 6))]  # Wednesday only
-        member_blocks_map = {"Bob": bob_blocks, "Alice": []}
-        cws = [{"year": 2026, "week_number": 19, "label": "CW19",
-                "start": "2026-05-04", "end": "2026-05-08"}]
-
-        result = DependencyGraph.compute_at_risk_weeks("Alice", edges, member_blocks_map, cws)
-        assert 19 in result
-
-
-# ---------------------------------------------------------------------------
-# Date-bounded dependencies  (Phase 14 / FR-005 / FR-006 / FR-007)
-# ---------------------------------------------------------------------------
-
-class TestDateBoundedDependencies:
-    def test_edge_with_dates_stores_date_fields(self):
-        g = DependencyGraph()
-        g.add_edge("Alice", "Bob", MEMBERS, active_from="2026-06-01", active_to="2026-06-30")
-        edge = g.edges()[0]
-        assert edge["active_from"] == "2026-06-01"
-        assert edge["active_to"] == "2026-06-30"
-
-    def test_edge_without_dates_omits_date_fields(self):
-        g = DependencyGraph()
-        g.add_edge("Alice", "Bob", MEMBERS)
-        edge = g.edges()[0]
-        assert edge.get("active_from") is None
-        assert edge.get("active_to") is None
+        g.add_dependency("Alice", ["Bob"], MEMBERS)
+        dep = g.edges()[0]
+        assert dep.get("active_from") is None
+        assert dep.get("active_to") is None
 
     def test_only_active_from_raises(self):
         g = DependencyGraph()
         with pytest.raises(ValueError, match="neither"):
-            g.add_edge("Alice", "Bob", MEMBERS, active_from="2026-06-01")
+            g.add_dependency("Alice", ["Bob"], MEMBERS, active_from="2026-06-01")
 
     def test_only_active_to_raises(self):
         g = DependencyGraph()
         with pytest.raises(ValueError, match="neither"):
-            g.add_edge("Alice", "Bob", MEMBERS, active_to="2026-06-30")
+            g.add_dependency("Alice", ["Bob"], MEMBERS, active_to="2026-06-30")
 
     def test_active_from_after_active_to_raises(self):
         g = DependencyGraph()
         with pytest.raises(ValueError):
-            g.add_edge("Alice", "Bob", MEMBERS,
-                       active_from="2026-07-01", active_to="2026-06-30")
+            g.add_dependency("Alice", ["Bob"], MEMBERS,
+                             active_from="2026-07-01", active_to="2026-06-30")
 
-    def test_same_pair_different_date_ranges_allowed(self):
+    def test_same_pool_different_date_ranges_allowed(self):
         g = DependencyGraph()
-        g.add_edge("Alice", "Bob", MEMBERS, active_from="2026-06-01", active_to="2026-06-30")
-        g.add_edge("Alice", "Bob", MEMBERS, active_from="2026-09-01", active_to="2026-09-30")
+        g.add_dependency("Alice", ["Bob"], MEMBERS,
+                         active_from="2026-06-01", active_to="2026-06-30")
+        g.add_dependency("Alice", ["Bob"], MEMBERS,
+                         active_from="2026-09-01", active_to="2026-09-30")
         assert len(g.edges()) == 2
 
-    def test_identical_tuple_rejected(self):
+    # --------------------------------------------------------------- remove --
+
+    def test_remove_dependency_removes_correct_entry(self):
         g = DependencyGraph()
-        g.add_edge("Alice", "Bob", MEMBERS, active_from="2026-06-01", active_to="2026-06-30")
-        with pytest.raises(ValueError, match="already exists"):
-            g.add_edge("Alice", "Bob", MEMBERS,
-                       active_from="2026-06-01", active_to="2026-06-30")
+        g.add_dependency("Alice", ["Bob", "Carol"], MEMBERS)
+        g.add_dependency("Alice", ["Dave"], MEMBERS)
+        g.remove_dependency("Alice", ["Bob", "Carol"])
+        deps = g.edges()
+        assert len(deps) == 1
+        assert deps[0]["to_members"] == ["Dave"]
 
-    def test_remove_edge_with_dates_removes_correct_entry(self):
+    def test_remove_nonexistent_raises_key_error(self):
         g = DependencyGraph()
-        g.add_edge("Alice", "Bob", MEMBERS, active_from="2026-06-01", active_to="2026-06-30")
-        g.add_edge("Alice", "Bob", MEMBERS, active_from="2026-09-01", active_to="2026-09-30")
-        g.remove_edge("Alice", "Bob", active_from="2026-06-01", active_to="2026-06-30")
-        edges = g.edges()
-        assert len(edges) == 1
-        assert edges[0]["active_from"] == "2026-09-01"
+        with pytest.raises(KeyError):
+            g.remove_dependency("Alice", ["Bob"])
 
-    def test_at_risk_only_within_active_range(self):
-        # Bob absent in CW28 (Jul), but dependency active only in June → no at-risk
-        edges = [{"from_member": "Alice", "to_member": "Bob",
-                  "active_from": "2026-06-01", "active_to": "2026-06-30"}]
-        bob_blocks = [AbsencePeriod(date(2026, 7, 6), date(2026, 7, 10))]
-        member_blocks_map = {"Bob": bob_blocks, "Alice": []}
-        cws = [{"year": 2026, "week_number": 28, "label": "CW28",
-                "start": "2026-07-06", "end": "2026-07-10"}]
-        result = DependencyGraph.compute_at_risk_weeks("Alice", edges, member_blocks_map, cws)
-        assert 28 not in result
+    def test_remove_with_dates_matches_correct_entry(self):
+        g = DependencyGraph()
+        g.add_dependency("Alice", ["Bob"], MEMBERS,
+                         active_from="2026-06-01", active_to="2026-06-30")
+        g.add_dependency("Alice", ["Bob"], MEMBERS,
+                         active_from="2026-09-01", active_to="2026-09-30")
+        g.remove_dependency("Alice", ["Bob"],
+                             active_from="2026-06-01", active_to="2026-06-30")
+        deps = g.edges()
+        assert len(deps) == 1
+        assert deps[0]["active_from"] == "2026-09-01"
 
-    def test_at_risk_within_active_range_when_dep_absent(self):
-        # Bob absent in CW24 (Jun), dependency active in June → at-risk
-        edges = [{"from_member": "Alice", "to_member": "Bob",
-                  "active_from": "2026-06-01", "active_to": "2026-06-30"}]
-        bob_blocks = [AbsencePeriod(date(2026, 6, 8), date(2026, 6, 12))]
-        member_blocks_map = {"Bob": bob_blocks, "Alice": []}
-        cws = [{"year": 2026, "week_number": 24, "label": "CW24",
-                "start": "2026-06-08", "end": "2026-06-12"}]
-        result = DependencyGraph.compute_at_risk_weeks("Alice", edges, member_blocks_map, cws)
+    # ---------------------------------------------------- compute_deadlock ---
+
+    def test_deadlock_when_all_pool_members_absent(self):
+        deps = [{"from_member": "Alice", "to_members": ["Bob", "Carol"]}]
+        abs_sets = {
+            "Bob": {date(2026, 5, 4)},
+            "Carol": {date(2026, 5, 7)},
+        }
+        result = DependencyGraph.compute_deadlock_weeks("Alice", deps, abs_sets, [CW19])
+        assert 19 in result
+
+    def test_no_deadlock_when_one_pool_member_present(self):
+        deps = [{"from_member": "Alice", "to_members": ["Bob", "Carol"]}]
+        abs_sets = {
+            "Bob": {date(2026, 5, 4)},
+            "Carol": set(),
+        }
+        result = DependencyGraph.compute_deadlock_weeks("Alice", deps, abs_sets, [CW19])
+        assert 19 not in result
+
+    def test_no_deadlock_for_unrelated_member(self):
+        deps = [{"from_member": "Alice", "to_members": ["Bob", "Carol"]}]
+        abs_sets = {
+            "Bob": {date(2026, 5, 4)},
+            "Carol": {date(2026, 5, 5)},
+        }
+        result = DependencyGraph.compute_deadlock_weeks("Dave", deps, abs_sets, [CW19])
+        assert 19 not in result
+
+    def test_deadlock_respects_active_range_outside(self):
+        deps = [{
+            "from_member": "Alice",
+            "to_members": ["Bob"],
+            "active_from": "2026-06-01",
+            "active_to": "2026-06-30",
+        }]
+        abs_sets = {"Bob": {date(2026, 5, 4)}}
+        result = DependencyGraph.compute_deadlock_weeks("Alice", deps, abs_sets, [CW19])
+        assert 19 not in result
+
+    def test_deadlock_respects_active_range_inside(self):
+        deps = [{
+            "from_member": "Alice",
+            "to_members": ["Bob"],
+            "active_from": "2026-06-01",
+            "active_to": "2026-06-30",
+        }]
+        abs_sets = {"Bob": {date(2026, 6, 8)}}
+        result = DependencyGraph.compute_deadlock_weeks("Alice", deps, abs_sets, [CW24])
         assert 24 in result
 
-    def test_indefinite_dependency_unchanged(self):
-        # No dates → at-risk for all weeks where dep is absent (existing behaviour)
-        edges = [{"from_member": "Alice", "to_member": "Bob"}]
-        bob_blocks = [AbsencePeriod(date(2026, 7, 6), date(2026, 7, 10))]
-        member_blocks_map = {"Bob": bob_blocks, "Alice": []}
-        cws = [{"year": 2026, "week_number": 28, "label": "CW28",
-                "start": "2026-07-06", "end": "2026-07-10"}]
-        result = DependencyGraph.compute_at_risk_weeks("Alice", edges, member_blocks_map, cws)
-        assert 28 in result
+    def test_no_deps_returns_empty(self):
+        result = DependencyGraph.compute_deadlock_weeks("Alice", [], {}, [CW19])
+        assert result == []
+
+    # ------------------------------------------------ compute_bottleneck ----
+
+    def test_bottleneck_weight_sole_present_satisfier(self):
+        deps = [{"from_member": "Alice", "to_members": ["Bob", "Carol"]}]
+        abs_sets = {
+            "Bob": set(),
+            "Carol": {date(2026, 5, 4), date(2026, 5, 5),
+                      date(2026, 5, 6), date(2026, 5, 7), date(2026, 5, 8)},
+        }
+        weights = DependencyGraph.compute_bottleneck_weights(deps, abs_sets, [CW19])
+        assert weights.get("Bob", 0) >= 1
+        assert weights.get("Carol", 0) == 0
+
+    def test_bottleneck_weight_zero_when_multiple_present(self):
+        deps = [{"from_member": "Alice", "to_members": ["Bob", "Carol"]}]
+        abs_sets = {
+            "Bob": set(),
+            "Carol": set(),
+        }
+        weights = DependencyGraph.compute_bottleneck_weights(deps, abs_sets, [CW19])
+        assert weights.get("Bob", 0) == 0
+        assert weights.get("Carol", 0) == 0
+
+    def test_bottleneck_weight_zero_when_deadlock(self):
+        deps = [{"from_member": "Alice", "to_members": ["Bob", "Carol"]}]
+        abs_sets = {
+            "Bob": {date(2026, 5, 4)},
+            "Carol": {date(2026, 5, 5)},
+        }
+        weights = DependencyGraph.compute_bottleneck_weights(deps, abs_sets, [CW19])
+        assert weights.get("Bob", 0) == 0
+        assert weights.get("Carol", 0) == 0
+
+    def test_bottleneck_weight_accumulates_across_deps(self):
+        deps = [
+            {"from_member": "Alice", "to_members": ["Bob", "Carol"]},
+            {"from_member": "Dave", "to_members": ["Bob", "Eve"]},
+        ]
+        abs_sets = {
+            "Bob": set(),
+            "Carol": {date(2026, 5, 4)},
+            "Eve": {date(2026, 5, 4)},
+        }
+        weights = DependencyGraph.compute_bottleneck_weights(deps, abs_sets, [CW19])
+        assert weights.get("Bob", 0) >= 2
+
+    def test_bottleneck_weight_accumulates_across_weeks(self):
+        deps = [{"from_member": "Alice", "to_members": ["Bob", "Carol"]}]
+        abs_sets = {
+            "Bob": set(),
+            "Carol": {date(2026, 5, 4), date(2026, 6, 8)},
+        }
+        weights = DependencyGraph.compute_bottleneck_weights(deps, abs_sets, [CW19, CW24])
+        assert weights.get("Bob", 0) >= 2

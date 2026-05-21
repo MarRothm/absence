@@ -12,7 +12,7 @@ from absence_dashboard import data_fetcher
 from absence_dashboard.parser import parse_members
 from absence_dashboard.merger import merge_periods
 from absence_dashboard.state import load_state, save_state, AppState
-from absence_dashboard.graph import DependencyGraph, CycleError
+from absence_dashboard.graph import DependencyGraph
 from absence_dashboard.phases_manager import add_phase, remove_phase, update_phase
 
 
@@ -89,26 +89,38 @@ def _assemble_dashboard(app) -> dict:
     members = app.config["MEMBERS"]
     state = app.config["STATE"]
     calendar_weeks = _build_calendar_weeks()
-    edges = state.dependencies
-    bottlenecks = DependencyGraph.get_bottlenecks(edges)
-    member_blocks_map = {m.name: m.merged_blocks for m in members}
+    deps = state.dependencies
+
+    member_absence_date_sets = {
+        m.name: {
+            d
+            for block in m.merged_blocks
+            for d in (
+                block.start_date + timedelta(days=i)
+                for i in range((block.end_date - block.start_date).days + 1)
+            )
+        }
+        for m in members
+    }
+
+    bottleneck_weights = DependencyGraph.compute_bottleneck_weights(
+        deps, member_absence_date_sets, calendar_weeks
+    )
 
     result_members = []
     for m in members:
-        at_risk = DependencyGraph.compute_at_risk_weeks(
-            m.name, edges, member_blocks_map, calendar_weeks
+        deadlock = DependencyGraph.compute_deadlock_weeks(
+            m.name, deps, member_absence_date_sets, calendar_weeks
         )
         member_clusters = [c["name"] for c in state.clusters if m.name in c.get("members", [])]
-        depends_on = [e["to_member"] for e in edges if e["from_member"] == m.name]
         result_members.append({
             "name": m.name,
-            "is_bottleneck": m.name in bottlenecks,
+            "is_bottleneck": bottleneck_weights.get(m.name, 0) > 0,
             "merged_blocks": [
                 {"start": b.start_date.isoformat(), "end": b.end_date.isoformat()}
                 for b in m.merged_blocks
             ],
-            "at_risk_weeks": at_risk,
-            "depends_on": depends_on,
+            "deadlock_weeks": deadlock,
             "clusters": member_clusters,
         })
 
@@ -117,9 +129,8 @@ def _assemble_dashboard(app) -> dict:
     return {
         "calendar_weeks": calendar_weeks,
         "members": result_members,
-        "dependencies": edges,
+        "dependencies": deps,
         "skill_clusters": state.clusters,
-        "bottlenecks": sorted(bottlenecks),
         "phases": state.phases,
         "skipped_rows": [
             {"row": s.row, "reason": s.reason}
@@ -179,7 +190,10 @@ def create_app(excel_path: str, state_path: str = "state/state.json") -> Flask:
 
         new_deps = []
         for dep in state.dependencies:
-            if dep["from_member"] not in new_names or dep["to_member"] not in new_names:
+            stale = dep["from_member"] not in new_names or any(
+                m not in new_names for m in dep.get("to_members", [])
+            )
+            if stale:
                 removed.append({"type": "dependency", "entry": dep})
             else:
                 new_deps.append(dep)
@@ -222,17 +236,15 @@ def create_app(excel_path: str, state_path: str = "state/state.json") -> Flask:
     def post_dependency():
         body = request.get_json(silent=True) or {}
         source      = body.get("from_member", "")
-        target      = body.get("to_member", "")
+        to_members  = body.get("to_members", [])
         active_from = body.get("active_from") or None
         active_to   = body.get("active_to") or None
         valid_names = {m.name for m in app.config["MEMBERS"]}
         state = app.config["STATE"]
         graph = DependencyGraph(state.dependencies)
         try:
-            graph.add_edge(source, target, valid_names,
-                           active_from=active_from, active_to=active_to)
-        except CycleError as e:
-            return jsonify({"error": str(e)}), 409
+            graph.add_dependency(source, to_members, valid_names,
+                                 active_from=active_from, active_to=active_to)
         except ValueError as e:
             msg = str(e)
             if "already exists" in msg:
@@ -250,24 +262,27 @@ def create_app(excel_path: str, state_path: str = "state/state.json") -> Flask:
     def put_dependency():
         body = request.get_json(silent=True) or {}
         old_from        = body.get("old_from", "")
-        old_to          = body.get("old_to", "")
+        old_to_members  = body.get("old_to_members", [])
         old_active_from = body.get("old_active_from") or None
         old_active_to   = body.get("old_active_to") or None
         new_from        = body.get("new_from", "")
-        new_to          = body.get("new_to", "")
+        new_to_members  = body.get("new_to_members", [])
         new_active_from = body.get("new_active_from") or None
         new_active_to   = body.get("new_active_to") or None
         valid_names = {m.name for m in app.config["MEMBERS"]}
         state = app.config["STATE"]
 
-        if new_from not in valid_names or new_to not in valid_names:
+        if new_from not in valid_names:
             return jsonify({"error": "Invalid member name"}), 400
+        for m in new_to_members:
+            if m not in valid_names:
+                return jsonify({"error": f"Member '{m}' not in loaded dataset."}), 400
 
-        # Locate old entry by full four-field key
+        old_pool_key = frozenset(old_to_members)
         old_entry = next(
             (d for d in state.dependencies
              if d["from_member"] == old_from
-             and d["to_member"] == old_to
+             and frozenset(d["to_members"]) == old_pool_key
              and d.get("active_from") == old_active_from
              and d.get("active_to") == old_active_to),
             None,
@@ -278,10 +293,8 @@ def create_app(excel_path: str, state_path: str = "state/state.json") -> Flask:
         remaining = [d for d in state.dependencies if d is not old_entry]
         graph = DependencyGraph(remaining)
         try:
-            graph.add_edge(new_from, new_to, valid_names,
-                           active_from=new_active_from, active_to=new_active_to)
-        except CycleError as e:
-            return jsonify({"error": str(e)}), 409
+            graph.add_dependency(new_from, new_to_members, valid_names,
+                                 active_from=new_active_from, active_to=new_active_to)
         except ValueError as e:
             msg = str(e)
             if "already exists" in msg:
@@ -300,13 +313,14 @@ def create_app(excel_path: str, state_path: str = "state/state.json") -> Flask:
     def delete_dependency():
         body = request.get_json(silent=True) or {}
         source      = body.get("from_member", "")
-        target      = body.get("to_member", "")
+        to_members  = body.get("to_members", [])
         active_from = body.get("active_from") or None
         active_to   = body.get("active_to") or None
         state = app.config["STATE"]
         graph = DependencyGraph(state.dependencies)
         try:
-            graph.remove_edge(source, target, active_from=active_from, active_to=active_to)
+            graph.remove_dependency(source, to_members,
+                                    active_from=active_from, active_to=active_to)
         except KeyError as e:
             return jsonify({"error": str(e)}), 404
         state.dependencies = graph.edges()
