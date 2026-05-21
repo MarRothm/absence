@@ -13,6 +13,9 @@
 - Q: Can one dependency have multiple separate date intervals? → A: No — one contiguous start–end range per dependency entry; multiple non-contiguous windows are expressed as separate dependency entries.
 - Q: Outside a dependency's active date range, what happens to the at-risk indicator? → A: No indicator shown — the dependency is inactive outside its window; affected calendar weeks render as if the dependency doesn't exist.
 - Q: With date intervals, what defines a duplicate dependency? → A: The tuple (from, to, start_date, end_date) is the unique key — the same (from, to) pair may appear multiple times with different date ranges; only an identical four-field tuple is rejected as a duplicate.
+- Q: Is a dependency stored as one source + a pool of targets, or as individual pairs? → A: One dependency record = one source person + an explicit pool (list) of one or more target persons; stored as a single record with a `to_members` list. A pool of one is valid.
+- Q: How should a deadlock (all pool members absent) be visualized? → A: Color the dependent person's Gantt row cells for the deadlock week in a distinct critical color AND display a "Deadlock" text label in the affected band.
+- Q: Should phase banners be highlighted when a deadlock overlaps their date range? → A: Yes — a phase banner turns a warning/alert color when a deadlock (all pool members absent) overlaps any day within the phase's date range.
 - Q: Where should the red vertical line be positioned relative to today's day sub-column? → A: Left edge of today's day sub-column — line sits on the column's left border, separating past from present.
 - Q: If today is Saturday or Sunday, where should the today indicator appear? → A: Do not show the indicator — the line is hidden entirely on weekends.
 - Q: Should the today indicator include a text label? → A: Yes — a small "Today" label anchored in the CW/day header row above the line.
@@ -316,6 +319,11 @@ colors are unchanged.
 - Two A→B dependency entries exist with different date ranges — both are valid and both contribute at-risk indicators within their respective active windows; calendar weeks covered by either range show at-risk indicators.
 - A dependency's active date range falls entirely before the visible timeline start (current week) — the dependency is stored but produces no at-risk indicators in the visible range (no error shown).
 - The manager adds a second A→B entry with an identical (from, to, active_from, active_to) tuple — rejected as a duplicate with an inline error; the original entry is unchanged.
+- A dependency pool has only one target (B) and B is absent — this is immediately a deadlock; the dependent person's row shows the deadlock color and "Deadlock" label.
+- A dependency pool has three targets (B, C, D); B and C are absent but D is present — bottleneck pressure only: D gains bottleneck weight, no deadlock coloring on the dependent's row.
+- A dependency pool has three targets (B, C, D); all three are absent in the same CW — deadlock: dependent person's CW band rendered in `--color-deadlock` with "Deadlock" label; any phase overlapping that week also renders in `--color-phase-deadlock`.
+- A phase overlaps with a deadlock week from one dependency AND is normal for all other dependencies — the phase banner turns alert color; only one deadlock is needed to trigger the highlight.
+- A deadlock exists outside any defined phase's date range — dependent person's row still shows the deadlock color; no phase banner is affected.
 - The manager edits a phase with an end date earlier than the start date — the edit row stays open with an inline date-range error; the original phase is unchanged.
 - The manager edits a cluster or phase name to one already used by another cluster or phase — the edit row stays open with an inline duplicate-name error; the original name is unchanged.
 - The manager edits a dependency to an (A→B) pair that already exists — the edit row stays open with an inline duplicate-dependency error; the original is unchanged.
@@ -332,20 +340,19 @@ colors are unchanged.
   name spelling are treated as a single person.
 - **FR-004**: The system MUST collect all absence periods across every Excel row for a given project member name and merge overlapping or adjacent periods into a single continuous visual block per merged span. A merged absence block MUST render as one unbroken bar across all absent day sub-columns, crossing week-column boundaries without visual interruption (e.g., an absence spanning Thu–Fri of CW22 and Mon–Wed of CW23 is displayed as a single connected bar, not two separate per-week blocks).
 - **FR-005**: The dashboard MUST provide a UI area where the manager can add, view, edit, and
-  remove directed dependencies between project members (A depends on B). Each dependency MAY
-  optionally include an active date range (`active_from` date, `active_to` date); when both
-  are omitted the dependency is active indefinitely. When provided, `active_from` ≤ `active_to`
-  is required. Editing a dependency expands its row inline with the "from" and "to" person
-  dropdowns and the optional date fields all editable; saving atomically replaces the old
-  dependency entry.
-- **FR-006**: The dashboard MUST visually mark a project member's entire calendar-week band (all 5 day sub-columns) with an at-risk indicator for any CW in which at least one day of the depended-on person's absence falls AND that calendar week overlaps with the dependency's active date range (if one is set). The at-risk indicator is week-granular: a single absent day in a CW triggers the full-week at-risk highlight on the dependent's row. Calendar weeks that fall entirely outside the dependency's `active_from`–`active_to` range MUST NOT show an at-risk indicator, even if the depended-on person is absent in those weeks.
-- **FR-007**: The system MUST detect dependency cycles and display a warning; cycle-creating
-  dependencies MUST NOT be saved. Duplicate dependencies are identified by the four-field tuple
-  (from, to, active_from, active_to); a duplicate tuple MUST be rejected with an inline error.
-  Two entries with the same (from, to) pair but different date ranges are NOT duplicates and
-  MUST both be accepted.
-- **FR-008**: The system MUST automatically mark project members who are listed as a dependency
-  by two or more other project members with a distinct bottleneck indicator.
+  remove dependencies. Each dependency has one `from_member` (the dependent person) and a
+  `to_members` pool (multi-select, one or more project members who can satisfy the dependency).
+  Each dependency MAY optionally include an active date range (`active_from` date, `active_to`
+  date); when both are omitted the dependency is active indefinitely. When provided,
+  `active_from` ≤ `active_to` is required. Editing a dependency expands its row inline with the
+  "from" person dropdown, the "to" pool multi-select, and the optional date fields all editable;
+  saving atomically replaces the old dependency entry.
+- **FR-006**: The dashboard MUST compute two risk states per dependency per calendar week (within the dependency's active date range, if set):
+  - **Deadlock**: ALL members of `to_members` are absent in that CW → the dependent person (from_member) is fully blocked. The dependent person's entire CW band (all 5 day sub-columns) MUST be rendered in a distinct critical color (`--color-deadlock`, e.g. crimson/deep red) AND a "Deadlock" text label MUST appear in the first day sub-column of the affected week band.
+  - **Bottleneck pressure**: SOME but not ALL members of `to_members` are absent → the present members of the pool gain increased bottleneck weight for that CW. No at-risk coloring is shown on the dependent person's row; instead the present pool member(s) are marked with elevated bottleneck status.
+  Member rows MUST NOT display at-risk cell coloring under either state.
+- **FR-007**: Duplicate dependencies are identified by the tuple (from_member, frozenset(to_members), active_from, active_to); an identical tuple MUST be rejected with an inline error. Two entries with the same (from_member, to_members) but different date ranges are NOT duplicates. Cycle detection is not required for pool-based dependencies.
+- **FR-008**: The system MUST compute a **bottleneck weight** for each project member per calendar week: the number of active dependencies whose `to_members` pool contains that person AND for which that person is the only present pool member in that CW. A member with bottleneck weight ≥ 1 in any CW MUST carry a visible bottleneck indicator on their row header. Bottleneck absence cells MUST NOT be colored differently from normal absence cells (red bottleneck-absent coloring is removed).
 - **FR-009**: The dashboard MUST provide a UI area where the manager can add, edit, and remove
   named skill clusters and assign project members to them. Editing a cluster expands its row
   inline with both the cluster name (text field) and its member list (multi-select) editable.
@@ -370,6 +377,10 @@ colors are unchanged.
 - **FR-018**: Each project phase MUST be rendered as a horizontal banner row above all member
   rows in the timeline, spanning the exact day-columns covered by the phase's start and end dates.
   If a phase extends beyond the visible timeline range, only the visible portion is rendered.
+  A phase banner MUST be rendered in a distinct alert color (`--color-phase-deadlock`) when at
+  least one dependency deadlock (all `to_members` absent simultaneously) overlaps any day within
+  the phase's date range and the dependency's active window. A phase with no overlapping deadlock
+  renders in its normal color.
 - **FR-019**: Multiple project phases MAY overlap in date range. Each overlapping phase MUST
   render as a separate, independently labelled banner row; no merging or deduplication of
   overlapping phases occurs.
@@ -407,11 +418,17 @@ colors are unchanged.
   cells in a project member's row in the date-grid. Represented internally as (start date, end
   date inclusive); the source is individual day-columns in the Excel grid, not explicit date columns.
 - **Merged Absence Block**: The combined result of all overlapping/adjacent raw absence periods for a project member — a single non-overlapping span rendered as one unbroken visual bar across all constituent day sub-columns, crossing calendar-week column boundaries without interruption.
-- **Dependency**: A directed relationship (A → B) stored in the dashboard UI meaning "A is at
-  risk when B is absent." Optionally bounded by an active date range (`active_from`, `active_to`,
-  both inclusive). When the date range is omitted the dependency is permanently active. When a
-  date range is set, at-risk indicators are only shown for calendar weeks that overlap the range.
-  Uniqueness key: (from, to, active_from, active_to). Cycles are prohibited.
+- **Dependency**: A relationship stored in the dashboard UI meaning "person A needs at least one
+  person from the target pool {B, C, D, …} to be present." Stored as one record with a single
+  `from_member` and a `to_members` list (one or more targets). Optionally bounded by an active
+  date range (`active_from`, `active_to`, both inclusive; omitting both means permanently active).
+  Uniqueness key: (from_member, frozenset(to_members), active_from, active_to).
+  **Satisfied** when ≥ 1 member of `to_members` is present during the relevant period.
+  **Deadlock** when ALL members of `to_members` are simultaneously absent during a calendar week.
+  **Bottleneck pressure**: when some (but not all) of `to_members` are absent, the present
+  member(s) in the pool gain increased bottleneck weight (they are the sole satisfiers of the
+  dependency). Cycle detection is not applicable under this model (a pool-based dependency
+  cannot form a directed cycle in the same way as a 1-to-1 edge).
 - **Bottleneck**: A project member who is the target of dependencies from two or more distinct
   other project members. Computed automatically from the dependency graph.
 - **Skill Cluster**: A named group of project members defined by the manager in the dashboard
