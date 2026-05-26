@@ -470,9 +470,24 @@ body {
 .tg-day-cell.deadlock {
   background: var(--color-deadlock);
   color: #fff;
-  font-size: 7px;
   font-weight: 700;
-  overflow: hidden;
+  position: relative;
+  overflow: visible;
+}
+
+.deadlock-label {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: var(--cw-group-width);
+  text-align: center;
+  font-size: 8px;
+  font-weight: 700;
+  color: #fff;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 1;
 }
 
 .tg-row.tg-phase-row.phase-has-deadlock .tg-day-cell.phase-active {
