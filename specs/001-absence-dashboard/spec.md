@@ -7,6 +7,14 @@
 
 ## Clarifications
 
+### Session 2026-06-01
+
+- Q: Which rows are displayed in "all entries" mode? → A: All rows with a non-empty name in Column D (both migration and non-migration people).
+- Q: What should the dashboard display by default on first load? → A: Migration team only — "all entries" is an opt-in view.
+- Q: How should the filter control be presented? → A: Toggle button in the fixed header bar switching between "Show All" and "Migration Only".
+- Q: Should non-migration members be visually distinct in "all entries" mode? → A: Yes — non-migration rows are rendered with a muted/dimmed style to distinguish them from migration members.
+- Q: Should non-migration members be selectable in dependency and cluster management panels? → A: No — dependency and cluster panels remain limited to migration members only regardless of the active filter.
+
 ### Session 2026-05-15
 
 - Q: Should the dependency date interval be optional or required? → A: Optional — omitting both dates means the dependency is always active (indefinite); a date range is only provided when the collaboration window is known.
@@ -99,6 +107,17 @@ are correctly merged, and calendar weeks run from the current week through year-
    **When** the timeline is displayed,
    **Then** only calendar weeks CW 19 (current week) through the final week of 2026 are shown;
    earlier weeks are hidden.
+
+5. **Given** the dashboard is loaded (default "Migration Only" mode),
+   **When** the manager clicks the "Show All" toggle in the header bar,
+   **Then** all persons with a non-empty name in Column D are shown; non-migration members
+   appear with a visually distinct muted/dimmed style; the dependency, cluster, and phase
+   panels are unchanged and still list only migration members.
+
+6. **Given** the dashboard is in "All Entries" mode,
+   **When** the manager clicks the toggle to switch back to "Migration Only",
+   **Then** non-migration rows are immediately hidden and the view returns to the migration
+   subset without a page reload.
 
 ---
 
@@ -327,6 +346,8 @@ colors are unchanged.
 - The manager edits a phase with an end date earlier than the start date — the edit row stays open with an inline date-range error; the original phase is unchanged.
 - The manager edits a cluster or phase name to one already used by another cluster or phase — the edit row stays open with an inline duplicate-name error; the original name is unchanged.
 - The manager edits a dependency to an (A→B) pair that already exists — the edit row stays open with an inline duplicate-dependency error; the original is unchanged.
+- The Excel file contains no non-migration rows — the "All Entries" toggle is still present and functional; toggling it produces no visual change since all persons are already migration members.
+- In "All Entries" mode, the manager attempts to add a non-migration person to a dependency or cluster — the management panel dropdowns/multi-selects do not include non-migration members; the action is not possible.
 
 ## Requirements *(mandatory)*
 
@@ -334,10 +355,7 @@ colors are unchanged.
 
 - **FR-001**: The system MUST read absence data from a user-provided Excel spreadsheet file structured as a date-grid: Column D ("Team Mitglied ") is the person name; Column C ("Projekt Migration") is the membership filter; Row 1 contains calendar week labels; Row 2 contains weekday names (Mon–Fri); Column F onward are individual working-day columns starting April 27, 2026. A cell value of "x" (case-insensitive) in a day-column indicates absence for that person on that day; any other value or empty cell means present. The system derives each person's absence periods from consecutive "x"-marked cells in their row.
 - **FR-002**: The system MUST display a timeline organized by calendar week (ISO week numbers) from the current calendar week through the final week of the current year. Each calendar-week column header MUST display the CW number and the date of its Monday in the format `"CW[N] | D Mon"` (e.g., `"CW22 | 25 May"`). Each calendar-week column MUST be sub-divided into 5 individual working-day sub-columns; each sub-column header displays a single-character weekday label (M / T / W / T / F for Mon–Fri) without an individual date. Absence and presence are indicated per day: only the specific days a person is absent are marked; a person absent fewer than 5 days in a given week MUST NOT appear as fully absent for that week.
-- **FR-003**: The dashboard MUST show exactly one row per project member. A project member is
-  identified by their exact name string (Column D, "Team Mitglied"); only rows with "x"
-  (case-insensitive) in Column C ("Projekt Migration") are included. All rows sharing the same
-  name spelling are treated as a single person.
+- **FR-003**: The dashboard MUST show exactly one row per person, where a person is identified by their exact name string in Column D ("Team Mitglied"). The active display mode determines which persons appear: in "Migration Only" mode (the default on first load) only rows with "x" (case-insensitive) in Column C ("Projekt Migration") are included; in "All Entries" mode all rows with a non-empty name in Column D are included regardless of Column C. All rows sharing the same name spelling are treated as a single person across both modes.
 - **FR-004**: The system MUST collect all absence periods across every Excel row for a given project member name and merge overlapping or adjacent periods into a single continuous visual block per merged span. A merged absence block MUST render as one unbroken bar across all absent day sub-columns, crossing week-column boundaries without visual interruption (e.g., an absence spanning Thu–Fri of CW22 and Mon–Wed of CW23 is displayed as a single connected bar, not two separate per-week blocks).
 - **FR-005**: The dashboard MUST provide a UI area where the manager can add, view, edit, and
   remove dependencies. Each dependency has one `from_member` (the dependent person) and a
@@ -408,6 +426,8 @@ colors are unchanged.
   loaded or refreshed in the fixed header bar, top-right corner, using the format
   `"Last loaded: D Mon YYYY, HH:MM"` (e.g., `"Last loaded: 11 May 2026, 14:32"`). This
   timestamp MUST update immediately after every successful data refresh.
+
+- **FR-027**: The dashboard MUST provide a toggle button in the fixed header bar that switches between two display modes: **"Migration Only"** (default on first load — only persons with "x" in Column C shown) and **"All Entries"** (all persons with a non-empty name in Column D shown). In "All Entries" mode, non-migration persons (those without "x" in Column C) MUST be rendered with a visually distinct muted/dimmed style to differentiate them from migration members at a glance. The toggle MUST take effect immediately without a page reload. The dependency, skill cluster, and project phase management panels MUST remain limited to migration members regardless of the active display mode.
 
 ### Key Entities
 
@@ -493,6 +513,10 @@ colors are unchanged.
   is out of scope for v1.
 - Absence types/reasons (vacation, sick, training) are treated uniformly for display purposes;
   no category-based filtering is required for v1.
+- The dashboard defaults to "Migration Only" display mode on first load; the manager can switch
+  to "All Entries" via a toggle in the fixed header bar to see all persons with a name in Column D.
+  Non-migration persons in "All Entries" mode are shown with a muted/dimmed visual style.
+  Management panels (dependencies, clusters, phases) are always scoped to migration members only.
 - A bottleneck threshold of 2 or more incoming dependencies is fixed; it is not configurable
   in v1.
 

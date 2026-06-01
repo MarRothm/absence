@@ -378,6 +378,40 @@ reflects sole-satisfier weight. No at-risk or bottleneck-absent cell coloring re
 
 ---
 
+## Phase 16: Display Mode Toggle — Show All / Migration Only (FR-027)
+
+**Goal**: The dashboard defaults to showing only migration members ("Migration Only"). A toggle
+button in the fixed header bar switches to "All Entries" mode, which displays all persons with a
+non-empty name in Column D; non-migration persons appear with a muted/dimmed style. All management
+panel dropdowns remain limited to migration members in both modes.
+
+**Independent Test**: Start the app. Verify only migration members are shown (default). Click the
+toggle — verify all persons appear, non-migration rows are visually dimmed. Click the toggle again
+— non-migration rows disappear. Verify dependency/cluster panels only list migration members in
+both modes.
+
+### Tests for Phase 16
+
+- [x] T091 Update `tests/conftest.py` `sample_workbook` fixture to include 2 non-migration rows (Column C value not "x") alongside the 3 existing migration rows; update any existing assertion in `tests/unit/test_parser.py` and `tests/integration/test_app.py` that checks exact member count of 3 to expect 5
+- [x] T092 [P] Write failing unit tests for updated `absence_dashboard/parser.py` in `tests/unit/test_parser.py`: (a) `parse_members` returns all 5 rows including non-migration; (b) migration rows have `is_migration_member=True`; (c) non-migration rows have `is_migration_member=False`; (d) same-name consolidation: if any row for a name had "x" in Column C, `is_migration_member=True` for the merged person
+- [x] T093 [P] Write failing integration tests in `tests/integration/test_app.py`: (a) `GET /api/dashboard` `members` array contains all 5 persons; (b) each member object has an `is_migration_member` boolean field; (c) values match fixture (3 `true`, 2 `false`)
+
+### Implementation for Phase 16
+
+- [x] T094 Update `absence_dashboard/parser.py`: add `is_migration_member: bool` to `PersonAbsence` dataclass; remove the Column C exclusion filter from `parse_members` (include all rows with non-empty Column D); compute `is_migration_member=True` if any row for that name had "x" (case-insensitive) in Column C — confirm T092 now passes
+- [x] T095 Update `GET /api/dashboard` and `POST /api/refresh` in `absence_dashboard/app.py` to pass `is_migration_member` from `PersonAbsence` into each member object in the response — confirm T093 now passes
+- [x] T096 [P] Add `<button id="btn-toggle-filter">Migration Only</button>` to the fixed header bar in `absence_dashboard/static/index.html` alongside the Reload button
+- [x] T097 [P] Add `.row--non-migration` CSS rule to `absence_dashboard/static/style.css`: `opacity: 0.45; font-style: italic` — non-migration rows are visually distinct; absence, deadlock, and bottleneck cell colors still render normally over the dimmed row
+- [x] T098 Implement toggle logic in `absence_dashboard/static/main.js`: add module-level `let showAll = false` and `let _lastData = null`; store each successful API response in `_lastData`; wire `#btn-toggle-filter` click to flip `showAll`, update button label ("Show All" ↔ "Migration Only"), and re-call `renderTimeline(_lastData)` without a network request; inside `renderTimeline()`, for each member `<tr>`: set `tr.style.display = (!showAll && !member.is_migration_member) ? 'none' : ''` and toggle class `row--non-migration` on non-migration rows only when `showAll` is true
+- [x] T099 Update dropdown and multi-select population in `absence_dashboard/static/main.js` for all three management panels (dependency "From"/"To" selects, cluster member multi-select): filter `data.members` to `member.is_migration_member === true` before building `<option>` elements — non-migration members must never appear as selectable targets regardless of the active display mode
+- [x] T100 Run end-to-end validation for FR-027: `pytest tests/ -v` all green including T092–T093; start app with actual Excel file; verify "Migration Only" default (only migration rows shown); click "Show All" — non-migration rows appear dimmed with `row--non-migration`; click "Migration Only" — non-migration rows hidden; confirm dependency/cluster panel dropdowns list only migration members in both modes
+
+**Checkpoint**: FR-027 complete. Toggle switches display mode without page reload. Non-migration
+members visible (dimmed) in "All Entries" mode. Management panels always scoped to migration
+members.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -393,6 +427,7 @@ reflects sole-satisfier weight. No at-risk or bottleneck-absent cell coloring re
 - **Phase 9 (US6)**: Depends on Phase 2; independent of US1–US5 (new entity, no shared state)
 - **Phase 10 (Final Polish)**: Depends on Phase 9 complete
 - **Phase 11 (Inline Edit)**: Depends on Phases 4, 6, 9 (dependency graph, clusters, and phases all must exist before edit endpoints can be layered on top)
+- **Phase 16 (FR-027 Toggle)**: Depends on Phase 2 (parser) and Phase 3 (dashboard GET); independent of Phases 4–15
 
 ### User Story Dependencies
 
@@ -466,6 +501,7 @@ Phase 5 (US3) starts only after Phase 4 completes.
 8. + US6 → Project phase banner rows
 9. Final Polish → full suite green, end-to-end smoke test
 10. + Phase 11 → Inline edit for dependencies, clusters, phases
+11. + Phase 16 → Display mode toggle (Show All / Migration Only)
 
 ---
 
@@ -476,4 +512,4 @@ Phase 5 (US3) starts only after Phase 4 completes.
 - Commit after each phase checkpoint passes
 - `state/state.json` is created automatically on first run; delete it to reset all config
 - `tests/conftest.py` `sample_workbook` fixture must exactly mirror confirmed grid layout: Col C filter, Col D name, Col F+ dates starting 2026-04-27
-- Total tasks: **83** (T001–T078 complete ✅; T079–T083 added 2026-05-15 — time-bounded dependencies per FR-005/FR-006/FR-007 update)
+- Total tasks: **100** (T001–T090 complete ✅; T091–T100 added 2026-06-01 — display mode toggle per FR-027, clarification session 2026-06-01)

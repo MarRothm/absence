@@ -25,6 +25,7 @@ Returns the complete data needed to render the dashboard. Called on page load an
   "members": [
     {
       "name": "Alice Müller",
+      "is_migration_member": true,
       "cluster": "Backend",
       "is_bottleneck": false,
       "merged_blocks": [
@@ -55,6 +56,13 @@ Returns the complete data needed to render the dashboard. Called on page load an
 `last_loaded` is an ISO 8601 datetime string (`YYYY-MM-DDTHH:MM:SS`) recording the moment the
 server last successfully parsed the Excel data. The frontend renders it in the fixed header bar,
 top-right, as `"Last loaded: D Mon YYYY, HH:MM"` (e.g., `"Last loaded: 11 May 2026, 14:32"`).
+
+`members` always contains **all** persons with a non-empty name in Column D (both migration and
+non-migration). The `is_migration_member` boolean per member drives the frontend display-mode
+toggle (FR-027): in "Migration Only" mode the frontend hides rows where `is_migration_member` is
+`false`; in "All Entries" mode all rows are shown, with non-migration rows styled as muted.
+Dependency, cluster, and phase management panels always restrict their member dropdowns to entries
+where `is_migration_member` is `true`.
 
 ---
 

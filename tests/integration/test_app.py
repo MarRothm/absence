@@ -24,14 +24,14 @@ class TestGetDashboard:
         rv = client.get("/api/dashboard")
         assert rv.status_code == 200
 
-    def test_exactly_three_members(self, client):
+    def test_exactly_five_members(self, client):
         data = client.get("/api/dashboard").get_json()
-        assert len(data["members"]) == 3
+        assert len(data["members"]) == 5
 
     def test_member_names_correct(self, client):
         data = client.get("/api/dashboard").get_json()
         names = {m["name"] for m in data["members"]}
-        assert names == {"Alice", "Bob", "Carol"}
+        assert names == {"Alice", "Bob", "Carol", "Dave", "Eve"}
 
     def test_alice_merged_blocks(self, client):
         data = client.get("/api/dashboard").get_json()
@@ -140,6 +140,31 @@ class TestGetDashboard:
             assert "merged_blocks" in m
             assert "deadlock_weeks" in m
             assert "clusters" in m
+
+    def test_is_migration_member_field_present(self, client):
+        data = client.get("/api/dashboard").get_json()
+        for m in data["members"]:
+            assert "is_migration_member" in m, f"{m['name']} missing is_migration_member"
+
+    def test_migration_members_have_true_flag(self, client):
+        data = client.get("/api/dashboard").get_json()
+        migration_names = {"Alice", "Bob", "Carol"}
+        for m in data["members"]:
+            if m["name"] in migration_names:
+                assert m["is_migration_member"] is True
+
+    def test_non_migration_members_have_false_flag(self, client):
+        data = client.get("/api/dashboard").get_json()
+        non_migration_names = {"Dave", "Eve"}
+        for m in data["members"]:
+            if m["name"] in non_migration_names:
+                assert m["is_migration_member"] is False
+
+    def test_all_five_members_returned(self, client):
+        data = client.get("/api/dashboard").get_json()
+        names = {m["name"] for m in data["members"]}
+        assert "Dave" in names
+        assert "Eve" in names
 
 
 # ---------------------------------------------------------------------------

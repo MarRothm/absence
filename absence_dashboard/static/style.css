@@ -70,7 +70,15 @@ body {
 .btn-primary  { background: #3498db; color: #fff; }
 .btn-secondary{ background: #566573; color: #fff; }
 .btn-reload   { background: #27ae60; color: #fff; }
+.btn-filter   { background: #7f8c8d; color: #fff; }
+.btn-filter.active { background: #2980b9; color: #fff; }
 .btn:hover    { opacity: 0.85; }
+
+/* Non-migration member rows (visible only in "All Entries" mode) */
+.row--non-migration {
+  opacity: 0.45;
+  font-style: italic;
+}
 
 /* -------------------------------------------------------------------------
    Warnings

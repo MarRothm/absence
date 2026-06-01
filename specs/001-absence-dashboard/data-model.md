@@ -8,17 +8,25 @@
 
 ### ProjectMember
 
-Represents a person filtered in by the "Projekt Migration" column.
+Represents any person with a non-empty name in Column D of the Excel spreadsheet. Includes both
+migration members (Column C = "x") and non-migration members (Column C ≠ "x").
 
 | Field | Type | Constraints |
 |-------|------|-------------|
 | `name` | string | Non-empty; unique key; exact match from Excel |
+| `is_migration_member` | bool | `True` if Column C = "x" (case-insensitive); `False` otherwise |
 | `absence_periods` | list[AbsencePeriod] | Zero or more raw periods from Excel |
 | `merged_blocks` | list[MergedAbsenceBlock] | Computed; never stored |
 
-**Identity rule**: All Excel rows with the same exact `name` string AND "x" in "Projekt Migration"
-are consolidated into one ProjectMember. Rows with different `name` strings are treated as
-distinct people, even if names differ only by spacing or capitalization (no fuzzy matching).
+**Identity rule**: All Excel rows with the same exact `name` string are consolidated into one
+ProjectMember regardless of their Column C value; if any row for that name has "x" in Column C,
+`is_migration_member` is `True`. Rows with different `name` strings are treated as distinct people
+(no fuzzy matching).
+
+**Display mode** (FR-027): In "Migration Only" mode (default), only members with
+`is_migration_member = True` are rendered in the timeline. In "All Entries" mode, all members are
+rendered; non-migration members receive a `row--non-migration` CSS class for muted visual styling.
+Display mode is a frontend toggle — the API always returns the full member list.
 
 ---
 
@@ -210,6 +218,7 @@ The API assembles a single `DashboardData` response object for the frontend:
   "members": [
     {
       "name": "Alice",
+      "is_migration_member": true,
       "clusters": ["Backend"],
       "is_bottleneck": false,
       "merged_blocks": [
@@ -241,4 +250,5 @@ highlights all 5 day-cells for each week in this list with the at-risk style.
 
 **Member ordering**: Within each cluster, members are sorted alphabetically. Ungrouped members
 follow all clusters, also sorted alphabetically. Cluster order matches definition order in
-`state.json`.
+`state.json`. The full member list (both migration and non-migration) is always returned; the
+frontend applies the active display-mode filter client-side using the `is_migration_member` flag.

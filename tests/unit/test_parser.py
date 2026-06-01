@@ -56,20 +56,20 @@ class TestBuildDateMap:
 # ---------------------------------------------------------------------------
 
 class TestParseMembers:
-    def test_only_marked_rows_included(self, sample_workbook):
+    def test_all_named_rows_included(self, sample_workbook):
         ws = sample_workbook.active
         members, _ = parse_members(ws)
         names = {m.name for m in members}
         assert "Alice" in names
         assert "Bob" in names
         assert "Carol" in names
-        assert "Dave" not in names
-        assert "Eve" not in names
+        assert "Dave" in names
+        assert "Eve" in names
 
-    def test_exactly_three_members(self, sample_workbook):
+    def test_exactly_five_members(self, sample_workbook):
         ws = sample_workbook.active
         members, _ = parse_members(ws)
-        assert len(members) == 3
+        assert len(members) == 5
 
     def test_x_detection_case_insensitive(self):
         wb = Workbook()
@@ -138,3 +138,40 @@ class TestParseMembers:
         members, skipped = parse_members(ws)
         assert all(isinstance(m, PersonAbsence) for m in members)
         assert all(isinstance(s, SkippedRow) for s in skipped)
+
+    def test_is_migration_member_field_present(self, sample_workbook):
+        ws = sample_workbook.active
+        members, _ = parse_members(ws)
+        for m in members:
+            assert hasattr(m, "is_migration_member"), f"{m.name} missing is_migration_member"
+
+    def test_migration_members_flagged_true(self, sample_workbook):
+        ws = sample_workbook.active
+        members, _ = parse_members(ws)
+        migration_names = {"Alice", "Bob", "Carol"}
+        for m in members:
+            if m.name in migration_names:
+                assert m.is_migration_member is True, f"{m.name} should be migration member"
+
+    def test_non_migration_members_flagged_false(self, sample_workbook):
+        ws = sample_workbook.active
+        members, _ = parse_members(ws)
+        non_migration_names = {"Dave", "Eve"}
+        for m in members:
+            if m.name in non_migration_names:
+                assert m.is_migration_member is False, f"{m.name} should NOT be migration member"
+
+    def test_same_name_any_row_marked_gives_true(self):
+        wb = Workbook()
+        ws = wb.active
+        ws.cell(row=1, column=6, value="KW18")
+        ws.cell(row=2, column=6, value="Mo")
+        # Row 3: Grace NOT marked
+        ws.cell(row=3, column=4, value="Grace")
+        ws.cell(row=3, column=6, value="x")
+        # Row 4: Grace MARKED
+        ws.cell(row=4, column=3, value="x")
+        ws.cell(row=4, column=4, value="Grace")
+        members, _ = parse_members(ws)
+        grace = next(m for m in members if m.name == "Grace")
+        assert grace.is_migration_member is True

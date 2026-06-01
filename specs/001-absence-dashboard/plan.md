@@ -11,10 +11,12 @@ member as a Gantt-style day-level timeline for the remainder of the year, and le
 define, edit, and remove dependencies, skill clusters, and named project phases in the browser UI.
 All three management panels use an inline row-expansion edit pattern with Save/Cancel buttons
 (FR-022/FR-023); no modal overlays. The fixed header bar shows the date and time the data was last
-successfully loaded, top-right (FR-025). Technical approach: Flask + openpyxl + requests backend;
-vanilla HTML/CSS/JS frontend; local `state/state.json` for UI config persistence. Day sub-columns
-display single-character weekday labels (M/T/W/T/F). Project phases render as horizontal banner
-rows above member rows.
+successfully loaded, top-right (FR-025), and a **"Show All / Migration Only" toggle** (FR-027) that
+switches between showing only migration members (default) and all named persons in the spreadsheet;
+non-migration persons render with a muted/dimmed CSS style in "All Entries" mode. Technical
+approach: Flask + openpyxl + requests backend; vanilla HTML/CSS/JS frontend; local
+`state/state.json` for UI config persistence. Day sub-columns display single-character weekday
+labels (M/T/W/T/F). Project phases render as horizontal banner rows above member rows.
 
 ## Technical Context
 
@@ -52,6 +54,10 @@ Tracking.
 **PASS** — Stack unchanged: Python stdlib + openpyxl + Flask + vanilla JS. Inline edit follows
 the same row-expansion pattern for all three panels; no new abstractions. Edit is handled via
 existing PUT endpoints (extended to support renaming) plus one new PUT /api/dependencies endpoint.
+The FR-027 display-mode toggle is pure frontend state (a JS boolean + CSS class toggle on `<tr>`
+elements); no new API endpoint or server logic is added. Management panel dropdowns continue to
+filter to migration-only members using the existing `is_migration_member` flag already present in
+the `GET /api/dashboard` member payload.
 
 ## Project Structure
 

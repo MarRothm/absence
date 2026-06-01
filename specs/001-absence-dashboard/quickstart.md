@@ -68,9 +68,12 @@ appends `?download=1` and downloads the file anonymously before parsing.
 
 Open your browser and navigate to: **http://localhost:5000**
 
-The dashboard loads immediately. If the "Projekt Migration" column is present, only marked
-members are shown. The **last loaded date and time** is shown in the top-right corner of the
-header (e.g., `"Last loaded: 11 May 2026, 14:32"`) and updates on every successful refresh.
+The dashboard loads immediately in **Migration Only** mode — only members marked with "x" in
+the "Projekt Migration" column are shown. Use the **"Show All / Migration Only"** toggle in the
+header bar to switch to "All Entries" mode, which displays every named person in the spreadsheet;
+non-migration members appear dimmed. The **last loaded date and time** is shown in the top-right
+corner of the header (e.g., `"Last loaded: 11 May 2026, 14:32"`) and updates on every successful
+refresh.
 
 ---
 
@@ -93,6 +96,7 @@ are colored; a person absent Mon–Wed in CW23 shows 3 colored cells, leaving Th
 - **Red week band (all 5 day-cells)**: Member is "at risk" for that calendar week — at least one
   day of a person they depend on falls within that week (at-risk indicator is week-granular)
 - **Cluster label**: Shown in the row header next to the member name
+- **Dimmed row**: Person is not on the migration team (visible only in "All Entries" mode)
 
 ### Managing Project Phases
 
@@ -155,7 +159,7 @@ before implementation and passing after.
 
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
-| "No project members found" | No rows with "x" in "Projekt Migration" column | Verify column name and "x" values in the Excel file |
+| "No migration members found" | No rows with "x" in "Projekt Migration" column (dashboard defaults to Migration Only mode) | Verify column name and "x" values in the Excel file; or switch to "All Entries" mode to see everyone |
 | "Cannot read Excel file" | Wrong file path or file open in Excel | Close Excel and verify the path |
 | "Cannot download from SharePoint URL" | URL is not a public share or network is unavailable | Verify the link is "anyone with the link" and accessible in a browser without login |
 | Skipped rows warning | Missing or malformed dates in some rows | Review flagged rows in the Excel file |

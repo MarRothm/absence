@@ -7,6 +7,7 @@ BASE_DATE = date(2026, 4, 27)  # Monday CW18 — confirmed first date column (Co
 @dataclass
 class PersonAbsence:
     name: str
+    is_migration_member: bool = False
     absence_days: list = field(default_factory=list)
     merged_blocks: list = field(default_factory=list)
 
@@ -49,17 +50,19 @@ def parse_members(ws) -> tuple:
 
     max_row = ws.max_row or 2
     for row_idx in range(3, max_row + 1):
-        filter_val = str(ws.cell(row=row_idx, column=3).value or "").strip().lower()
-        if filter_val != "x":
-            continue
-
         name = str(ws.cell(row=row_idx, column=4).value or "").strip()
         if not name:
-            skipped.append(SkippedRow(row=row_idx, reason="Empty name in Column D"))
+            filter_val = str(ws.cell(row=row_idx, column=3).value or "").strip().lower()
+            if filter_val == "x":
+                skipped.append(SkippedRow(row=row_idx, reason="Empty name in Column D"))
             continue
 
+        is_migration = str(ws.cell(row=row_idx, column=3).value or "").strip().lower() == "x"
+
         if name not in members:
-            members[name] = PersonAbsence(name=name)
+            members[name] = PersonAbsence(name=name, is_migration_member=is_migration)
+        elif is_migration:
+            members[name].is_migration_member = True
 
         for col_idx, absence_date in date_map.items():
             cell_val = str(ws.cell(row=row_idx, column=col_idx).value or "").strip().lower()

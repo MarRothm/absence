@@ -1,6 +1,7 @@
 /* Absence Management Dashboard — main.js */
 
 let dashboardData = null;
+let showAll = false; // FR-027: display mode toggle
 
 // ---------------------------------------------------------------------------
 // Last-loaded timestamp display  (FR-025)
@@ -203,6 +204,15 @@ function renderTimeline(data) {
     row.className = "tg-row";
     if (member.is_bottleneck) row.classList.add("is-bottleneck");
 
+    // FR-027: hide non-migration rows in "Migration Only" mode
+    if (!member.is_migration_member) {
+      if (!showAll) {
+        row.style.display = "none";
+      } else {
+        row.classList.add("row--non-migration");
+      }
+    }
+
     const nameCellEl = document.createElement("div");
     nameCellEl.className = "tg-name";
     nameCellEl.textContent = member.name;
@@ -328,7 +338,8 @@ function renderDependencies(data) {
   const fromSel = document.getElementById("dep-from");
   const toSel   = document.getElementById("dep-to");
   const list    = document.getElementById("dep-list");
-  const names   = data.members.map(m => m.name).sort();
+  // FR-027: management panels always scoped to migration members only
+  const names   = data.members.filter(m => m.is_migration_member).map(m => m.name).sort();
 
   // Refresh "from" single-select
   const currentFrom = fromSel.value;
@@ -498,7 +509,8 @@ document.getElementById("btn-add-dep").addEventListener("click", async () => {
 function renderClusters(data) {
   const membersSelect = document.getElementById("cluster-members");
   const list          = document.getElementById("cluster-list");
-  const names         = data.members.map(m => m.name).sort();
+  // FR-027: management panels always scoped to migration members only
+  const names         = data.members.filter(m => m.is_migration_member).map(m => m.name).sort();
 
   const selectedValues = Array.from(membersSelect.selectedOptions).map(o => o.value);
   membersSelect.innerHTML = "";
@@ -734,6 +746,18 @@ document.getElementById("btn-add-phase").addEventListener("click", async () => {
     errEl.textContent = res.data.error || "Could not add phase.";
     errEl.classList.remove("hidden");
   }
+});
+
+// ---------------------------------------------------------------------------
+// Display mode toggle  (FR-027)
+// ---------------------------------------------------------------------------
+
+document.getElementById("btn-toggle-filter").addEventListener("click", () => {
+  showAll = !showAll;
+  const btn = document.getElementById("btn-toggle-filter");
+  btn.textContent = showAll ? "Show All" : "Migration Only";
+  btn.classList.toggle("active", showAll);
+  if (dashboardData) renderTimeline(dashboardData);
 });
 
 // ---------------------------------------------------------------------------

@@ -115,6 +115,7 @@ def _assemble_dashboard(app) -> dict:
         member_clusters = [c["name"] for c in state.clusters if m.name in c.get("members", [])]
         result_members.append({
             "name": m.name,
+            "is_migration_member": m.is_migration_member,
             "is_bottleneck": bottleneck_weights.get(m.name, 0) > 0,
             "merged_blocks": [
                 {"start": b.start_date.isoformat(), "end": b.end_date.isoformat()}
