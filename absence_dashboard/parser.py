@@ -26,10 +26,17 @@ def build_date_map(ws) -> dict:
     for col_idx in range(6, max_col + 1):
         result[col_idx] = working_day
         next_d = working_day + timedelta(days=1)
-        while next_d.weekday() >= 5:  # skip Sat (5) and Sun (6)
+        while next_d.weekday() >= 5:
             next_d += timedelta(days=1)
         working_day = next_d
     return result
+
+
+def _next_working_day(d: date) -> date:
+    d += timedelta(days=1)
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d
 
 
 def parse_members(ws) -> tuple:
@@ -43,30 +50,34 @@ def parse_members(ws) -> tuple:
       Col C (idx 3): "Projekt Migration" — include only rows where value.lower() == "x"
       Col D (idx 4): "Team Mitglied " — person name (stripped)
       Col F+ (idx 6+): Working day columns; "x" (case-insensitive) = absent
+
+    Uses iter_rows() so it works correctly with read_only=True workbooks.
     """
-    date_map = build_date_map(ws)
     members: dict[str, PersonAbsence] = {}
     skipped: list[SkippedRow] = []
 
-    max_row = ws.max_row or 2
-    for row_idx in range(3, max_row + 1):
-        name = str(ws.cell(row=row_idx, column=4).value or "").strip()
+    for row_idx, row in enumerate(ws.iter_rows(min_row=3, values_only=True), start=3):
+        name = str(row[3] or "").strip()  # col D = index 3
+        filter_val = str(row[2] or "").strip().lower()  # col C = index 2
+
         if not name:
-            filter_val = str(ws.cell(row=row_idx, column=3).value or "").strip().lower()
             if filter_val == "x":
                 skipped.append(SkippedRow(row=row_idx, reason="Empty name in Column D"))
             continue
 
-        is_migration = str(ws.cell(row=row_idx, column=3).value or "").strip().lower() == "x"
+        is_migration = filter_val == "x"
 
         if name not in members:
             members[name] = PersonAbsence(name=name, is_migration_member=is_migration)
         elif is_migration:
             members[name].is_migration_member = True
 
-        for col_idx, absence_date in date_map.items():
-            cell_val = str(ws.cell(row=row_idx, column=col_idx).value or "").strip().lower()
-            if cell_val == "x" and absence_date not in members[name].absence_days:
-                members[name].absence_days.append(absence_date)
+        # Build date map on-the-fly for columns F+ (index 5 onward)
+        working_day = BASE_DATE
+        for col_offset, cell_val in enumerate(row[5:], start=0):
+            if str(cell_val or "").strip().lower() == "x":
+                if working_day not in members[name].absence_days:
+                    members[name].absence_days.append(working_day)
+            working_day = _next_working_day(working_day)
 
     return list(members.values()), skipped
