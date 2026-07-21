@@ -908,3 +908,59 @@ class TestPoolDependenciesAPI:
         new_dep = next(d for d in deps if d["from_member"] == "Alice")
         assert new_dep["to_members"] == ["Carol"]
         assert new_dep["active_from"] == "2026-07-01"
+
+
+# ---------------------------------------------------------------------------
+# resolve_launch_source() — CLI arg vs launch_config.json precedence (feature 002)
+# ---------------------------------------------------------------------------
+
+class TestResolveLaunchSource:
+    def test_cli_arg_takes_precedence_over_launch_config(self, tmp_path):
+        cli_xlsx = tmp_path / "cli.xlsx"
+        cli_xlsx.write_text("dummy")
+        config_path = tmp_path / "launch_config.json"
+        config_path.write_text(json.dumps({"excel_source": "config.xlsx", "port": 9999}))
+
+        from absence_dashboard.app import resolve_launch_source
+        source, port = resolve_launch_source(str(cli_xlsx), None, config_path=str(config_path))
+
+        assert source == str(cli_xlsx)
+        assert port == 5002  # existing CLI default, NOT launch_config's 9999
+
+    def test_no_cli_arg_falls_back_to_launch_config(self, tmp_path):
+        xlsx = tmp_path / "absences.xlsx"
+        xlsx.write_text("dummy")
+        config_path = tmp_path / "launch_config.json"
+        config_path.write_text(json.dumps({"excel_source": str(xlsx), "port": 6100}))
+
+        from absence_dashboard.app import resolve_launch_source
+        source, port = resolve_launch_source(None, None, config_path=str(config_path))
+
+        assert source == str(xlsx)
+        assert port == 6100
+
+    def test_explicit_cli_port_overrides_launch_config_port(self, tmp_path):
+        xlsx = tmp_path / "absences.xlsx"
+        xlsx.write_text("dummy")
+        config_path = tmp_path / "launch_config.json"
+        config_path.write_text(json.dumps({"excel_source": str(xlsx), "port": 6100}))
+
+        from absence_dashboard.app import resolve_launch_source
+        source, port = resolve_launch_source(None, 7000, config_path=str(config_path))
+
+        assert port == 7000
+
+    def test_no_cli_arg_and_missing_launch_config_raises(self, tmp_path):
+        config_path = tmp_path / "missing.json"
+
+        from absence_dashboard.app import resolve_launch_source
+        with pytest.raises(FileNotFoundError):
+            resolve_launch_source(None, None, config_path=str(config_path))
+
+    def test_nonexistent_cli_path_raises_file_not_found(self, tmp_path):
+        config_path = tmp_path / "launch_config.json"
+        config_path.write_text(json.dumps({"excel_source": "irrelevant.xlsx"}))
+
+        from absence_dashboard.app import resolve_launch_source
+        with pytest.raises(FileNotFoundError):
+            resolve_launch_source(str(tmp_path / "does_not_exist.xlsx"), None, config_path=str(config_path))

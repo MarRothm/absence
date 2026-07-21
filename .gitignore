@@ -16,6 +16,7 @@ build/
 
 # App runtime
 state/state.json
+launch_config.json
 *.xlsx
 !tests/fixtures/*.xlsx
 

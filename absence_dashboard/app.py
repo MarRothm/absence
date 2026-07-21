@@ -14,6 +14,7 @@ from absence_dashboard.merger import merge_periods
 from absence_dashboard.state import load_state, save_state, AppState
 from absence_dashboard.graph import DependencyGraph
 from absence_dashboard.phases_manager import add_phase, remove_phase, update_phase
+from absence_dashboard.launch_config import load_launch_config, DEFAULT_PORT
 
 
 # ---------------------------------------------------------------------------
@@ -468,16 +469,35 @@ def create_app(excel_path: str, state_path: str = "state/state.json") -> Flask:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def resolve_launch_source(excel_file, port_arg, config_path="launch_config.json"):
+    """Resolve (source, port) from CLI args, falling back to launch_config.json when
+    excel_file is not supplied (the packaged/double-click launch case — see
+    specs/002-windows-standalone-build/contracts/launch-config.md). Raises
+    FileNotFoundError with an actionable message when neither path yields a usable source.
+    """
+    if excel_file is not None:
+        if not excel_file.startswith(("http://", "https://")) and not os.path.exists(excel_file):
+            raise FileNotFoundError(f"File not found: {excel_file}")
+        return excel_file, port_arg if port_arg is not None else DEFAULT_PORT
+
+    source, config_port = load_launch_config(config_path)
+    return source, port_arg if port_arg is not None else config_port
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Absence Management Dashboard")
-    parser.add_argument("excel_file", help="Path to the .xlsx absence spreadsheet")
-    parser.add_argument("--port", type=int, default=5002, help="Port to listen on (default 5002)")
+    parser.add_argument(
+        "excel_file", nargs="?", default=None,
+        help="Path to the .xlsx absence spreadsheet (omit to read launch_config.json)",
+    )
+    parser.add_argument("--port", type=int, default=None, help="Port to listen on (default 5002)")
     args = parser.parse_args()
 
-    source = args.excel_file
-    if not source.startswith(("http://", "https://")) and not os.path.exists(source):
-        print(f"Error: File not found: {source}", file=sys.stderr)
+    try:
+        source, port = resolve_launch_source(args.excel_file, args.port)
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
     try:
@@ -486,7 +506,7 @@ if __name__ == "__main__":
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
     try:
-        application.run(host="localhost", port=args.port, debug=False)
+        application.run(host="localhost", port=port, debug=False)
     except OSError as e:
-        print(f"Port {args.port} in use — retry with --port <N>", file=sys.stderr)
+        print(f"Port {port} in use — retry with --port <N>", file=sys.stderr)
         sys.exit(1)

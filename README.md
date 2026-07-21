@@ -10,6 +10,13 @@ full setup and usage instructions.
 
 ```bash
 pip install -r requirements.txt
-python absence_dashboard/app.py path/to/absences.xlsx
-# Open http://localhost:5000
+python run.py path/to/absences.xlsx
+# Open http://localhost:5002
 ```
+
+## Standalone Windows Build (Citrix / Server 2016)
+
+A self-contained Windows package is also available — no Python install, no administrator rights,
+built automatically via GitHub Actions on every push to `main`. See
+[specs/002-windows-standalone-build/quickstart.md](specs/002-windows-standalone-build/quickstart.md)
+for how to download, configure, and run it on a Windows Server 2016 / Citrix session.
