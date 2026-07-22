@@ -30,10 +30,17 @@ def build_date_map(ws, year: int = None) -> dict:
     which silently mis-dates every absence whenever the real file's actual date range
     differs from that assumption (a real production bug this replaces).
 
-    A column whose header cells don't resolve to a recognizable (week, weekday) pair is
-    left out of the map entirely. `year` defaults to the current year; it's bumped by one
-    internally whenever the week number decreases moving left to right, so a sheet
-    spanning a December-January boundary is still dated correctly.
+    Row 1's week-number cell is commonly merged across all 5 weekday columns in real
+    files (shown once, spanning Mon-Fri) — a merged cell's value only physically exists
+    in its leftmost column, so the week number is forward-filled across the blank cells
+    the merge covers (otherwise every day but the first of each week silently drops out
+    of the map, which is exactly what happened in production).
+
+    A column whose weekday cell doesn't resolve to a recognized abbreviation, or that has
+    no week number yet established (nothing seen so far to forward-fill from), is left out
+    of the map entirely. `year` defaults to the current year; it's bumped by one internally
+    whenever an explicit week number decreases moving left to right, so a sheet spanning a
+    December-January boundary is still dated correctly.
     """
     if year is None:
         year = date.today().year
@@ -51,12 +58,19 @@ def build_date_map(ws, year: int = None) -> dict:
         cw_cell = str(header_row[col_idx - 1] or "")
         wd_cell = str(weekday_row[col_idx - 1] or "").strip().lower()[:2]
         week_digits = re.sub(r"\D", "", cw_cell)
-        if not week_digits or wd_cell not in WEEKDAY_ABBREV:
+
+        if week_digits:
+            week_number = int(week_digits)
+            if last_week is not None and week_number < last_week:
+                year += 1
+            last_week = week_number
+        elif last_week is not None:
+            week_number = last_week  # merged cell — carry the last explicit week forward
+        else:
+            continue  # no week number established yet; can't date this column
+
+        if wd_cell not in WEEKDAY_ABBREV:
             continue
-        week_number = int(week_digits)
-        if last_week is not None and week_number < last_week:
-            year += 1
-        last_week = week_number
         result[col_idx] = date.fromisocalendar(year, week_number, WEEKDAY_ABBREV[wd_cell])
 
     return result

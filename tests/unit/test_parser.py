@@ -100,6 +100,35 @@ class TestBuildDateMap:
         dm = build_date_map(ws, year=2026)
         assert dm[6] == date(2026, 4, 27)
 
+    def test_merged_week_number_cell_forward_filled(self):
+        # Regression test for a real production bug: Excel commonly merges the week-
+        # number cell across all 5 weekday columns (visually shown once, spanning
+        # Mon-Fri). A merged cell's value only physically exists in its leftmost column
+        # — every other cell it covers reads as blank. Row 1 must forward-fill the most
+        # recently seen week number across those blank cells, or every day but the first
+        # of each week silently drops out of the map (only Monday ever got dated).
+        ws = self._make_ws([
+            ("KW18", "Montag"), (None, "Dienstag"), (None, "Mittwoch"),
+            (None, "Donnerstag"), (None, "Freitag"), ("KW19", "Montag"),
+        ])
+        dm = build_date_map(ws, year=2026)
+        assert dm[6] == date(2026, 4, 27)
+        assert dm[7] == date(2026, 4, 28)
+        assert dm[8] == date(2026, 4, 29)
+        assert dm[9] == date(2026, 4, 30)
+        assert dm[10] == date(2026, 5, 1)
+        assert dm[11] == date(2026, 5, 4)
+
+    def test_merged_week_number_cell_across_year_rollover(self):
+        ws = self._make_ws([
+            ("KW52", "Montag"), (None, "Dienstag"), ("KW1", "Montag"), (None, "Dienstag"),
+        ])
+        dm = build_date_map(ws, year=2026)
+        assert dm[6] == date(2026, 12, 21)
+        assert dm[7] == date(2026, 12, 22)
+        assert dm[8] == date(2027, 1, 4)
+        assert dm[9] == date(2027, 1, 5)
+
 
 # ---------------------------------------------------------------------------
 # parse_members
