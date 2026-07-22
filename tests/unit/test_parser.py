@@ -14,41 +14,91 @@ from absence_dashboard.parser import build_date_map, parse_members, PersonAbsenc
 # ---------------------------------------------------------------------------
 
 class TestBuildDateMap:
-    def _make_ws(self, max_col: int):
+    def _make_ws(self, columns):
+        """columns: list of (kw_label, weekday_abbrev) tuples, one per column starting at F(6)."""
         wb = Workbook()
         ws = wb.active
-        # Set max_column by writing a value in the last column
-        ws.cell(row=1, column=max_col, value="end")
+        for offset, (kw, wd) in enumerate(columns):
+            col = 6 + offset
+            ws.cell(row=1, column=col, value=kw)
+            ws.cell(row=2, column=col, value=wd)
         return ws
 
     def test_col_f_is_base_date(self):
-        ws = self._make_ws(6)
-        dm = build_date_map(ws)
+        ws = self._make_ws([("KW18", "Mo")])
+        dm = build_date_map(ws, year=2026)
         assert dm[6] == date(2026, 4, 27)
 
     def test_col_g_is_next_working_day(self):
-        ws = self._make_ws(7)
-        dm = build_date_map(ws)
+        ws = self._make_ws([("KW18", "Mo"), ("KW18", "Di")])
+        dm = build_date_map(ws, year=2026)
         assert dm[7] == date(2026, 4, 28)  # Tuesday
 
     def test_col_k_skips_weekend(self):
         # Col 6=Mon Apr27, 7=Tue Apr28, 8=Wed Apr29, 9=Thu Apr30,
         # 10=Fri May1, 11=Mon May4 (skip Sat May2 + Sun May3)
-        ws = self._make_ws(11)
-        dm = build_date_map(ws)
+        ws = self._make_ws([
+            ("KW18", "Mo"), ("KW18", "Di"), ("KW18", "Mi"), ("KW18", "Do"), ("KW18", "Fr"),
+            ("KW19", "Mo"),
+        ])
+        dm = build_date_map(ws, year=2026)
         assert dm[10] == date(2026, 5, 1)   # Friday
         assert dm[11] == date(2026, 5, 4)   # Monday (weekend skipped)
 
     def test_no_columns_below_6(self):
-        ws = self._make_ws(5)
-        dm = build_date_map(ws)
+        ws = self._make_ws([])
+        dm = build_date_map(ws, year=2026)
         assert 5 not in dm
         assert 6 not in dm
 
     def test_returns_all_columns_from_6(self):
-        ws = self._make_ws(8)
-        dm = build_date_map(ws)
+        ws = self._make_ws([("KW18", "Mo"), ("KW18", "Di"), ("KW18", "Mi")])
+        dm = build_date_map(ws, year=2026)
         assert set(dm.keys()) == {6, 7, 8}
+
+    def test_uses_actual_header_dates_not_hardcoded_sequence(self):
+        # Regression test for a real production bug: a column's date MUST be derived
+        # from that column's own header cells (Row 1 CW label, Row 2 weekday), never
+        # from a fixed starting date plus a sequential working-day increment — the real
+        # file's actual date range can (and did) differ from any such hardcoded
+        # assumption, silently mis-dating every absence in the sheet.
+        ws = self._make_ws([("KW30", "Mo")])
+        dm = build_date_map(ws, year=2026)
+        assert dm[6] == date(2026, 7, 20)
+        assert dm[6] != date(2026, 4, 27)
+
+    def test_year_rolls_over_when_week_number_decreases(self):
+        ws = self._make_ws([("KW52", "Mo"), ("KW1", "Mo")])
+        dm = build_date_map(ws, year=2026)
+        assert dm[6] == date(2026, 12, 21)
+        assert dm[7] == date(2027, 1, 4)
+
+    def test_column_with_unrecognized_header_is_skipped(self):
+        ws = self._make_ws([("KW18", "Mo"), ("", ""), ("KW18", "Mi")])
+        dm = build_date_map(ws, year=2026)
+        assert set(dm.keys()) == {6, 8}
+
+    def test_full_german_weekday_names_recognized(self):
+        # Regression test for a real production file: Row 2 can hold full German day
+        # names ("Montag", "Dienstag", ...) instead of the two-letter abbreviations
+        # ("Mo", "Di", ...) the original format assumed — both must resolve correctly.
+        ws = self._make_ws([
+            ("KW18", "Montag"), ("18", "Dienstag"), ("18", "Mittwoch"),
+            ("18", "Donnerstag"), ("18", "Freitag"),
+        ])
+        dm = build_date_map(ws, year=2026)
+        assert dm[6] == date(2026, 4, 27)
+        assert dm[7] == date(2026, 4, 28)
+        assert dm[8] == date(2026, 4, 29)
+        assert dm[9] == date(2026, 4, 30)
+        assert dm[10] == date(2026, 5, 1)
+
+    def test_bare_integer_week_number_recognized(self):
+        # Regression test: Row 1 can hold a bare integer (18) instead of a "KW18"-style
+        # string — both must resolve to the same week.
+        ws = self._make_ws([(18, "Mo")])
+        dm = build_date_map(ws, year=2026)
+        assert dm[6] == date(2026, 4, 27)
 
 
 # ---------------------------------------------------------------------------
@@ -175,3 +225,18 @@ class TestParseMembers:
         members, _ = parse_members(ws)
         grace = next(m for m in members if m.name == "Grace")
         assert grace.is_migration_member is True
+
+    def test_uses_real_header_dates_for_a_late_starting_sheet(self):
+        # Regression test for the real production bug: a sheet whose data columns start
+        # at a week far from the old hardcoded BASE_DATE (April 27, 2026) must still be
+        # dated correctly, derived from its own header cells.
+        wb = Workbook()
+        ws = wb.active
+        ws.cell(row=1, column=6, value="KW30")
+        ws.cell(row=2, column=6, value="Mo")
+        ws.cell(row=3, column=3, value="x")
+        ws.cell(row=3, column=4, value="Hilde")
+        ws.cell(row=3, column=6, value="x")
+        members, _ = parse_members(ws)
+        hilde = next(m for m in members if m.name == "Hilde")
+        assert date(2026, 7, 20) in hilde.absence_days

@@ -1,7 +1,12 @@
-from datetime import date, timedelta
+import re
 from dataclasses import dataclass, field
+from datetime import date
 
-BASE_DATE = date(2026, 4, 27)  # Monday CW18 — confirmed first date column (Col F, index 6)
+# Keyed on the first two lowercased characters, so this matches both the abbreviated
+# ("Mo", "Di", ...) and full ("Montag", "Dienstag", ...) German weekday names real
+# production files have used interchangeably (see specs/005-restore-local-file's
+# implementation notes) — all five weekdays have distinct two-letter prefixes.
+WEEKDAY_ABBREV = {"mo": 1, "di": 2, "mi": 3, "do": 4, "fr": 5}
 
 
 @dataclass
@@ -18,25 +23,43 @@ class SkippedRow:
     reason: str
 
 
-def build_date_map(ws) -> dict:
-    """Map column index (>=6) to the corresponding working date starting from BASE_DATE."""
-    result = {}
-    working_day = BASE_DATE
+def build_date_map(ws, year: int = None) -> dict:
+    """Map column index (>=6) to its real calendar date, derived from that column's own
+    Row 1 (calendar week label, e.g. "KW18") and Row 2 (weekday abbreviation, e.g. "Mo")
+    header cells — never assumed from a fixed starting date plus a sequential increment,
+    which silently mis-dates every absence whenever the real file's actual date range
+    differs from that assumption (a real production bug this replaces).
+
+    A column whose header cells don't resolve to a recognizable (week, weekday) pair is
+    left out of the map entirely. `year` defaults to the current year; it's bumped by one
+    internally whenever the week number decreases moving left to right, so a sheet
+    spanning a December-January boundary is still dated correctly.
+    """
+    if year is None:
+        year = date.today().year
+
     max_col = ws.max_column or 5
+    if max_col < 6:
+        return {}
+
+    header_row = next(ws.iter_rows(min_row=1, max_row=1, min_col=1, max_col=max_col, values_only=True))
+    weekday_row = next(ws.iter_rows(min_row=2, max_row=2, min_col=1, max_col=max_col, values_only=True))
+
+    result = {}
+    last_week = None
     for col_idx in range(6, max_col + 1):
-        result[col_idx] = working_day
-        next_d = working_day + timedelta(days=1)
-        while next_d.weekday() >= 5:
-            next_d += timedelta(days=1)
-        working_day = next_d
+        cw_cell = str(header_row[col_idx - 1] or "")
+        wd_cell = str(weekday_row[col_idx - 1] or "").strip().lower()[:2]
+        week_digits = re.sub(r"\D", "", cw_cell)
+        if not week_digits or wd_cell not in WEEKDAY_ABBREV:
+            continue
+        week_number = int(week_digits)
+        if last_week is not None and week_number < last_week:
+            year += 1
+        last_week = week_number
+        result[col_idx] = date.fromisocalendar(year, week_number, WEEKDAY_ABBREV[wd_cell])
+
     return result
-
-
-def _next_working_day(d: date) -> date:
-    d += timedelta(days=1)
-    while d.weekday() >= 5:
-        d += timedelta(days=1)
-    return d
 
 
 def parse_members(ws) -> tuple:
@@ -44,8 +67,8 @@ def parse_members(ws) -> tuple:
     Parse Excel worksheet and return (list[PersonAbsence], list[SkippedRow]).
 
     Layout (confirmed):
-      Row 1: CW labels — skipped
-      Row 2: Weekday names — skipped
+      Row 1: CW labels — used to build the column-to-date map (build_date_map)
+      Row 2: Weekday names — used to build the column-to-date map
       Row 3+: Data rows
       Col C (idx 3): "Projekt Migration" — include only rows where value.lower() == "x"
       Col D (idx 4): "Team Mitglied " — person name (stripped)
@@ -55,6 +78,7 @@ def parse_members(ws) -> tuple:
     """
     members: dict[str, PersonAbsence] = {}
     skipped: list[SkippedRow] = []
+    date_map = build_date_map(ws)
 
     for row_idx, row in enumerate(ws.iter_rows(min_row=3, values_only=True), start=3):
         name = str(row[3] or "").strip()  # col D = index 3
@@ -72,12 +96,10 @@ def parse_members(ws) -> tuple:
         elif is_migration:
             members[name].is_migration_member = True
 
-        # Build date map on-the-fly for columns F+ (index 5 onward)
-        working_day = BASE_DATE
-        for col_offset, cell_val in enumerate(row[5:], start=0):
+        for col_idx, working_day in date_map.items():
+            cell_val = row[col_idx - 1] if col_idx - 1 < len(row) else None
             if str(cell_val or "").strip().lower() == "x":
                 if working_day not in members[name].absence_days:
                     members[name].absence_days.append(working_day)
-            working_day = _next_working_day(working_day)
 
     return list(members.values()), skipped
