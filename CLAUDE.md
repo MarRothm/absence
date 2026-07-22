@@ -1,5 +1,5 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/003-sharepoint-direct-connection/plan.md
+at specs/004-sharepoint-device-code-auth/plan.md
 <!-- SPECKIT END -->

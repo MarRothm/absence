@@ -8,15 +8,17 @@ full setup and usage instructions.
 
 ## Quick start
 
+The dashboard reads its absence spreadsheet directly from SharePoint and signs in as you (delegated
+OAuth2 device-code flow) — there is no anonymous or local-file data source. A one-time Azure AD app
+registration is required first; see
+[specs/004-sharepoint-device-code-auth/quickstart.md](specs/004-sharepoint-device-code-auth/quickstart.md).
+
 ```bash
 pip install -r requirements.txt
-python run.py "https://company.sharepoint.com/:x:/s/yoursite/Exxxxxxxxxxxxxxx?e=xxxxxx"
-# Open http://localhost:5002
+# Add client_id/tenant_id to launch_config.json (see quickstart above), then:
+python run.py
+# Follow the device-code sign-in prompt, then open http://localhost:5002
 ```
-
-A SharePoint "anyone with the link" share URL is the only supported data source — local file paths
-are no longer accepted (see
-[specs/003-sharepoint-direct-connection/quickstart.md](specs/003-sharepoint-direct-connection/quickstart.md)).
 
 ## Standalone Windows Build (Citrix / Server 2016)
 

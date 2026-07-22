@@ -88,6 +88,10 @@ def app(sample_xlsx, tmp_path, monkeypatch):
     """Serves sample_xlsx's bytes over a mocked HTTP GET rather than passing a local path
     to create_app — get_workbook() only accepts SharePoint (http/https) sources (feature 003),
     so this fixture fakes that transport instead of using a local-file bypass (research.md #2).
+
+    Also fakes graph_auth.acquire_token() (feature 004) so no test ever performs a real
+    device-code flow or reaches a real Microsoft endpoint — every call site (create_app's
+    initial load, and post_refresh's silent-only re-acquisition) sees the same fixed token.
     """
     with open(sample_xlsx, "rb") as f:
         xlsx_bytes = f.read()
@@ -95,10 +99,20 @@ def app(sample_xlsx, tmp_path, monkeypatch):
         "absence_dashboard.data_fetcher.requests.get",
         lambda *args, **kwargs: _FakeResponse(xlsx_bytes),
     )
+    monkeypatch.setattr(
+        "absence_dashboard.graph_auth.acquire_token",
+        lambda *args, **kwargs: "fake-access-token",
+    )
 
     state_path = str(tmp_path / "state.json")
     from absence_dashboard.app import create_app
-    flask_app = create_app("https://fake.sharepoint.example/absences.xlsx?e=test", state_path=state_path)
+    flask_app = create_app(
+        "https://fake.sharepoint.example/absences.xlsx?e=test",
+        "fake-access-token",
+        "fake-client-id",
+        "fake-tenant-id",
+        state_path=state_path,
+    )
     flask_app.config["TESTING"] = True
     return flask_app
 
