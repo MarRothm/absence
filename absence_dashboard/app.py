@@ -8,15 +8,13 @@ warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
 
 from flask import Flask, jsonify, request
 
-from absence_dashboard import data_fetcher, graph_auth
+from absence_dashboard import data_fetcher
 from absence_dashboard.parser import parse_members
 from absence_dashboard.merger import merge_periods
 from absence_dashboard.state import load_state, save_state, AppState
 from absence_dashboard.graph import DependencyGraph
 from absence_dashboard.phases_manager import add_phase, remove_phase, update_phase
 from absence_dashboard.launch_config import load_launch_config, DEFAULT_PORT
-
-TOKEN_CACHE_PATH = "state/token_cache.bin"
 
 
 # ---------------------------------------------------------------------------
@@ -56,8 +54,8 @@ def _build_calendar_weeks(today: date = None) -> list:
 # Excel loading helper
 # ---------------------------------------------------------------------------
 
-def _load_excel(source: str, access_token: str) -> tuple:
-    wb = data_fetcher.get_workbook(source, access_token)
+def _load_excel(source: str) -> tuple:
+    wb = data_fetcher.get_workbook(source)
     ws = wb.active
     members, skipped = parse_members(ws)
     wb.close()
@@ -148,17 +146,12 @@ def _assemble_dashboard(app) -> dict:
 # Application factory
 # ---------------------------------------------------------------------------
 
-def create_app(
-    excel_source: str, access_token: str, client_id: str, tenant_id: str,
-    state_path: str = "state/state.json",
-) -> Flask:
+def create_app(excel_source: str, state_path: str = "state/state.json") -> Flask:
     app = Flask(__name__, static_folder="static")
 
-    members, skipped, last_loaded = _load_excel(excel_source, access_token)
+    members, skipped, last_loaded = _load_excel(excel_source)
     app.config.update({
         "EXCEL_SOURCE": excel_source,
-        "CLIENT_ID": client_id,
-        "TENANT_ID": tenant_id,
         "STATE_PATH": state_path,
         "MEMBERS": members,
         "SKIPPED_ROWS": skipped,
@@ -189,15 +182,7 @@ def create_app(
     @app.route("/api/refresh", methods=["POST"])
     def post_refresh():
         try:
-            # Silent-only: a browser click has no console to show a device code on, so a
-            # session that can't be silently renewed here fails with a clear "restart the
-            # dashboard" message (research.md #4) rather than attempting an interactive
-            # sign-in from inside a web request handler.
-            access_token = graph_auth.acquire_token(
-                app.config["CLIENT_ID"], app.config["TENANT_ID"], TOKEN_CACHE_PATH,
-                interactive_fallback=False,
-            )
-            members, skipped, last_loaded = _load_excel(app.config["EXCEL_SOURCE"], access_token)
+            members, skipped, last_loaded = _load_excel(app.config["EXCEL_SOURCE"])
         except Exception as e:
             return jsonify({"error": str(e), "stale_data": True}), 422
 
@@ -485,32 +470,20 @@ def create_app(
 # ---------------------------------------------------------------------------
 
 def resolve_launch_source(excel_file, port_arg, config_path="launch_config.json"):
-    """Resolve (source, client_id, tenant_id, port) from CLI args and launch_config.json.
-
-    client_id/tenant_id (the Azure AD app registration used for delegated sign-in, feature
-    004) always come from launch_config.json — there is no CLI-argument equivalent for them
-    (specs/004-sharepoint-device-code-auth/contracts/launch-config.md). Only the file source
-    itself may be overridden by the excel_file CLI argument (the packaged/double-click
-    launch case falls back to launch_config.json's excel_source too — see
-    specs/002-windows-standalone-build/contracts/launch-config.md). excel_file must be a
-    SharePoint link (http:// or https://) — local-file paths are no longer supported
-    (feature 003), even ones that exist on disk. Raises FileNotFoundError with an
-    actionable message when no usable configuration is found.
+    """Resolve (source, port) from CLI args, falling back to launch_config.json when
+    excel_file is not supplied (the packaged/double-click launch case — see
+    specs/002-windows-standalone-build/contracts/launch-config.md). excel_file must be an
+    existing local file path — SharePoint access was permanently blocked by IT policy
+    (specs/005-restore-local-file/spec.md). Raises FileNotFoundError with an actionable
+    message when neither path yields a usable source.
     """
-    config_source, client_id, tenant_id, config_port = load_launch_config(config_path)
-
     if excel_file is not None:
-        if not excel_file.startswith(("http://", "https://")):
-            raise FileNotFoundError(
-                f"'{excel_file}' is not a SharePoint link — local-file support has been "
-                "removed. Pass a SharePoint share URL (http:// or https://) instead."
-            )
-        source = excel_file
-    else:
-        source = config_source
+        if not os.path.exists(excel_file):
+            raise FileNotFoundError(f"File not found: {excel_file}")
+        return excel_file, port_arg if port_arg is not None else DEFAULT_PORT
 
-    port = port_arg if port_arg is not None else config_port
-    return source, client_id, tenant_id, port
+    source, config_port = load_launch_config(config_path)
+    return source, port_arg if port_arg is not None else config_port
 
 
 def main():
@@ -518,26 +491,20 @@ def main():
     parser = argparse.ArgumentParser(description="Absence Management Dashboard")
     parser.add_argument(
         "excel_file", nargs="?", default=None,
-        help="SharePoint share URL for the .xlsx absence spreadsheet (omit to read launch_config.json)",
+        help="Path to the .xlsx absence spreadsheet (omit to read launch_config.json)",
     )
     parser.add_argument("--port", type=int, default=None, help="Port to listen on (default 5002)")
     args = parser.parse_args()
 
     try:
-        source, client_id, tenant_id, port = resolve_launch_source(args.excel_file, args.port)
+        source, port = resolve_launch_source(args.excel_file, args.port)
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
     try:
-        access_token = graph_auth.acquire_token(client_id, tenant_id, TOKEN_CACHE_PATH)
-    except RuntimeError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        application = create_app(source, access_token, client_id, tenant_id)
-    except ConnectionError as e:
+        application = create_app(source)
+    except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
     try:

@@ -4,9 +4,12 @@
 
 ---
 
-> **Update (feature 003)**: the dashboard now connects directly to a SharePoint file link —
-> local-file paths are no longer supported. See
-> [specs/003-sharepoint-direct-connection/quickstart.md](../003-sharepoint-direct-connection/quickstart.md).
+> **Update (feature 005)**: after two features explored a direct SharePoint connection (003, 004),
+> IT permanently blocked both approaches — the dashboard reads a local file again, same as
+> originally described below. See
+> [specs/005-restore-local-file/quickstart.md](../005-restore-local-file/quickstart.md) for the
+> current setup (the entry point and default port also changed since this page was written — use
+> `python run.py`, port `5002`).
 
 ## Prerequisites
 

@@ -16,7 +16,6 @@ build/
 
 # App runtime
 state/state.json
-state/token_cache.bin
 launch_config.json
 *.xlsx
 !tests/fixtures/*.xlsx
