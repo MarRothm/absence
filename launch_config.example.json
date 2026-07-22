@@ -1,6 +1,4 @@
 {
-  "excel_source": "https://company.sharepoint.com/:x:/s/yoursite/Exxxxxxxxxxxxxxx?e=xxxxxx",
-  "client_id": "00000000-0000-0000-0000-000000000000",
-  "tenant_id": "00000000-0000-0000-0000-000000000000",
+  "excel_source": "absences.xlsx",
   "port": 5002
 }

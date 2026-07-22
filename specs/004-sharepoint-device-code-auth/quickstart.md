@@ -4,6 +4,11 @@
 
 ---
 
+> **Update (feature 005)**: IT declined to create the app registration this feature needed — the
+> dashboard reads a local file again, with no sign-in step at all. See
+> [specs/005-restore-local-file/quickstart.md](../005-restore-local-file/quickstart.md) for the
+> current setup. The rest of this page is kept for history.
+
 ## Prerequisite: an Azure AD app registration (one-time, done by IT)
 
 Before this feature can be used, IT/your tenant admin needs to create an Azure AD (Entra ID) app

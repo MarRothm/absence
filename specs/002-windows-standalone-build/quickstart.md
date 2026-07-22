@@ -24,17 +24,22 @@
 
 ## Configuring the data source
 
-> **Update (feature 003)**: `excel_source` must be a SharePoint link — local-file paths are no
-> longer supported, even ones reachable from inside the Citrix session.
+> **Update (feature 005)**: SharePoint direct/authenticated access (features 003/004) was
+> permanently blocked by IT policy — `excel_source` is a local file path again. See
+> [specs/005-restore-local-file/quickstart.md](../005-restore-local-file/quickstart.md) for the
+> current setup.
 
-1. In the extracted folder, open `launch_config.json` in a text editor.
-2. Set `excel_source` to a public ("anyone with the link") SharePoint share URL.
-3. Optionally change `port` if `5002` is already in use (see Troubleshooting).
-4. Save the file.
+1. Download the current absence spreadsheet from SharePoint yourself (via your browser, where
+   you're already signed in) and copy it into the extracted folder alongside `launch_config.json`.
+2. Open `launch_config.json` in a text editor.
+3. Set `excel_source` to that file's path (a filename like `absences.xlsx` if you placed it right
+   next to the launcher, or a full path elsewhere).
+4. Optionally change `port` if `5002` is already in use (see Troubleshooting).
+5. Save the file.
 
 ```json
 {
-  "excel_source": "https://company.sharepoint.com/:x:/s/yoursite/Exxxxxxxxxxxxxxx?e=xxxxxx",
+  "excel_source": "absences.xlsx",
   "port": 5002
 }
 ```
@@ -56,11 +61,9 @@ version (see [spec 001's quickstart](../001-absence-dashboard/quickstart.md) for
 
 | Symptom | Likely Cause | Fix |
 |---|---|---|
-| Console closes immediately / "local-file support has been removed" | `excel_source` in `launch_config.json` is a local path, not a SharePoint link | Replace it with a SharePoint share URL (see above) |
-| Console closes immediately / "Error: excel_source not found" | `launch_config.json` missing or malformed | Re-open `launch_config.json` and check the JSON is valid |
+| Console closes immediately / "Error: excel_source not found" | `excel_source` in `launch_config.json` points to a file that isn't there, or `launch_config.json` is malformed | Confirm you copied the downloaded `.xlsx` to the path configured in `launch_config.json`, and that the JSON is valid |
 | "Port already in use" | Another instance is already running, or another app is using the port | Close the other instance, or change `port` in `launch_config.json` and re-launch |
 | Dashboard loads but changes (dependencies/clusters/phases) don't survive a restart | The bundle's folder is read-only or gets reset between Citrix sessions | Move the extracted bundle to a writable, persistent location (e.g., your redirected home drive) |
-| "Cannot download from SharePoint URL" | The Citrix session's network policy blocks the request, or the link isn't a public share | Confirm the link opens in a browser without login from inside the same session; check with IT whether outbound HTTPS to SharePoint is allowed. With local-file support removed, there is no fallback if this is blocked — the dashboard cannot be used until access is restored |
 | Browser doesn't open automatically | Default browser isn't configured in the session, or is blocked | Manually open `http://localhost:<port>` (the port from `launch_config.json`) in a browser |
 
 ---
