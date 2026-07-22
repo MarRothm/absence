@@ -489,7 +489,7 @@ def resolve_launch_source(excel_file, port_arg, config_path="launch_config.json"
     return source, port_arg if port_arg is not None else config_port
 
 
-if __name__ == "__main__":
+def main():
     import argparse
     parser = argparse.ArgumentParser(description="Absence Management Dashboard")
     parser.add_argument(
@@ -515,3 +515,7 @@ if __name__ == "__main__":
     except OSError as e:
         print(f"Port {port} in use — retry with --port <N>", file=sys.stderr)
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
