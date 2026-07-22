@@ -1,9 +1,13 @@
-"""Entry point for PyInstaller — runs absence_dashboard.app as __main__.
+"""Entry point for PyInstaller.
 
-A PyInstaller-frozen script's own directory is what ends up on sys.path (mirroring
-`python <script>` behavior), so the entry point must live at the repo root — not inside
-absence_dashboard/ — for `from absence_dashboard import ...` to resolve.
+Must be a real `import` (not a runtime string, e.g. via runpy) so PyInstaller's static
+analyzer can trace it and actually bundle the absence_dashboard package's code — a dynamic
+`runpy.run_module("absence_dashboard.app")` is invisible to that analysis and silently
+leaves the package out of the frozen build (see specs/003-sharepoint-direct-connection
+implementation notes). Also must live at the repo root, not inside absence_dashboard/, so
+that package's own internal `from absence_dashboard import ...` imports resolve correctly.
 """
-import runpy
+from absence_dashboard.app import main
 
-runpy.run_module("absence_dashboard.app", run_name="__main__")
+if __name__ == "__main__":
+    main()
