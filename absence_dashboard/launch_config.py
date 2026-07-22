@@ -18,7 +18,17 @@ def load_launch_config(path):
         raise FileNotFoundError(f"File not found: {path}")
 
     with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+        try:
+            data = json.load(f)
+        except json.JSONDecodeError as e:
+            # The most common cause on Windows: a raw file path with single backslashes
+            # (e.g. copy-pasted from Explorer) — JSON requires backslashes to be doubled.
+            raise FileNotFoundError(
+                f"{path} is not valid JSON: {e}. If excel_source contains a Windows file "
+                "path, double every backslash (\\\\) or use forward slashes (/) instead — "
+                "e.g. \"C:/Users/you/absences.xlsx\", or just \"absences.xlsx\" if the file "
+                "is right next to the launcher."
+            ) from e
 
     excel_source = data.get("excel_source")
     if not excel_source or not os.path.exists(excel_source):
