@@ -6,12 +6,14 @@ DEFAULT_PORT = 5002
 
 
 def load_launch_config(path):
-    """Load (excel_source, port) from a launch_config.json file.
+    """Load (excel_source, client_id, tenant_id, port) from a launch_config.json file.
 
     excel_source must be a SharePoint link (http:// or https://) — local-file paths are no
-    longer supported (feature 003), even ones that exist on disk. Raises FileNotFoundError
-    if the config file is missing, excel_source is missing, or excel_source is not a URL.
-    An invalid or missing port falls back to DEFAULT_PORT with a warning on stderr.
+    longer supported (feature 003), even ones that exist on disk. client_id/tenant_id
+    identify the Azure AD app registration used for delegated sign-in (feature 004) and
+    are both required. Raises FileNotFoundError if the config file is missing, or any of
+    excel_source/client_id/tenant_id is missing/invalid. An invalid or missing port falls
+    back to DEFAULT_PORT with a warning on stderr.
     """
     if not os.path.exists(path):
         raise FileNotFoundError(f"File not found: {path}")
@@ -29,9 +31,17 @@ def load_launch_config(path):
             "URL (http:// or https://) instead."
         )
 
+    client_id = data.get("client_id")
+    if not client_id:
+        raise FileNotFoundError(f"'client_id' is missing from {path}.")
+
+    tenant_id = data.get("tenant_id")
+    if not tenant_id:
+        raise FileNotFoundError(f"'tenant_id' is missing from {path}.")
+
     port = data.get("port", DEFAULT_PORT)
     if not isinstance(port, int) or isinstance(port, bool) or port <= 0:
         print(f"Invalid port {port!r} in {path} — using default {DEFAULT_PORT}", file=sys.stderr)
         port = DEFAULT_PORT
 
-    return excel_source, port
+    return excel_source, client_id, tenant_id, port

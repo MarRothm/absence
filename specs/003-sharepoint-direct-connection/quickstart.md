@@ -4,6 +4,13 @@
 
 ---
 
+> **Update (feature 004)**: anonymous "anyone with the link" access (described below) no longer
+> works — this tenant disables it entirely. The dashboard now signs in as the manager via delegated
+> OAuth2 device-code sign-in. See
+> [specs/004-sharepoint-device-code-auth/quickstart.md](../004-sharepoint-device-code-auth/quickstart.md)
+> for current setup steps. The rest of this page is kept for history; the "no local file" guarantee
+> it introduced is still accurate — only the "anonymous" part is superseded.
+
 ## What changed
 
 The dashboard no longer accepts a local `.xlsx` file path — a SharePoint file link is the only

@@ -3,8 +3,10 @@ Integration tests for absence_dashboard/app.py Flask routes.
 TDD: Written BEFORE implementation; confirmed failing before app.py is complete.
 """
 import json
+import sys
 import pytest
 from datetime import date
+from unittest.mock import MagicMock
 
 
 # ---------------------------------------------------------------------------
@@ -416,6 +418,25 @@ class TestRefresh:
         assert not any(
             d["from_member"] == "Alice" for d in data["dependencies"]
         )
+
+
+class TestRefreshExpiredSession:
+    """post_refresh() only attempts silent token renewal (no console to show a device
+    code on from a browser-triggered request) — when that fails, it must return a clear
+    "restart the dashboard" error, not an unhandled exception (feature 004, US3)."""
+
+    def test_expired_session_returns_clear_restart_message(self, app, client, monkeypatch):
+        def failing_acquire_token(client_id, tenant_id, cache_path, interactive_fallback=True):
+            assert interactive_fallback is False
+            raise RuntimeError("Signed-in session has expired. Restart the dashboard to sign in again.")
+
+        monkeypatch.setattr("absence_dashboard.graph_auth.acquire_token", failing_acquire_token)
+
+        rv = client.post("/api/refresh")
+
+        assert rv.status_code != 200
+        data = rv.get_json()
+        assert "restart the dashboard" in data["error"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -924,34 +945,59 @@ class TestPoolDependenciesAPI:
 # ---------------------------------------------------------------------------
 
 class TestResolveLaunchSource:
-    def test_cli_arg_takes_precedence_over_launch_config(self, tmp_path):
-        config_path = tmp_path / "launch_config.json"
-        config_path.write_text(json.dumps({"excel_source": "https://config.example.com/share?e=1", "port": 9999}))
+    """resolve_launch_source() always reads launch_config.json for client_id/tenant_id
+    (feature 004) — there is no CLI-argument equivalent for them (contracts/launch-config.md).
+    Only the file source itself may be overridden by the CLI argument."""
+
+    CLIENT_ID = "11111111-1111-1111-1111-111111111111"
+    TENANT_ID = "22222222-2222-2222-2222-222222222222"
+
+    def _write_config(self, tmp_path, **overrides):
+        data = {
+            "excel_source": "https://config.example.com/share?e=1",
+            "client_id": self.CLIENT_ID,
+            "tenant_id": self.TENANT_ID,
+        }
+        data.update(overrides)
+        path = tmp_path / "launch_config.json"
+        path.write_text(json.dumps(data))
+        return str(path)
+
+    def test_cli_arg_takes_precedence_over_launch_config_source(self, tmp_path):
+        config_path = self._write_config(tmp_path, port=9999)
 
         from absence_dashboard.app import resolve_launch_source
-        source, port = resolve_launch_source(
-            "https://cli.example.com/share?e=1", None, config_path=str(config_path)
+        source, client_id, tenant_id, port = resolve_launch_source(
+            "https://cli.example.com/share?e=1", None, config_path=config_path
         )
 
         assert source == "https://cli.example.com/share?e=1"
-        assert port == 5002  # existing CLI default, NOT launch_config's 9999
+        # launch_config.json is now always read (for client_id/tenant_id), so its port
+        # applies too unless an explicit --port flag overrides it (see next test).
+        assert port == 9999
+        # client_id/tenant_id still come from launch_config.json even when the CLI
+        # argument overrides the file source — there's no CLI equivalent for them.
+        assert client_id == self.CLIENT_ID
+        assert tenant_id == self.TENANT_ID
 
     def test_no_cli_arg_falls_back_to_launch_config(self, tmp_path):
-        config_path = tmp_path / "launch_config.json"
-        config_path.write_text(json.dumps({"excel_source": "https://example.com/share?e=1", "port": 6100}))
+        config_path = self._write_config(
+            tmp_path, excel_source="https://example.com/share?e=1", port=6100
+        )
 
         from absence_dashboard.app import resolve_launch_source
-        source, port = resolve_launch_source(None, None, config_path=str(config_path))
+        source, client_id, tenant_id, port = resolve_launch_source(None, None, config_path=config_path)
 
         assert source == "https://example.com/share?e=1"
         assert port == 6100
+        assert client_id == self.CLIENT_ID
+        assert tenant_id == self.TENANT_ID
 
     def test_explicit_cli_port_overrides_launch_config_port(self, tmp_path):
-        config_path = tmp_path / "launch_config.json"
-        config_path.write_text(json.dumps({"excel_source": "https://example.com/share?e=1", "port": 6100}))
+        config_path = self._write_config(tmp_path, port=6100)
 
         from absence_dashboard.app import resolve_launch_source
-        source, port = resolve_launch_source(None, 7000, config_path=str(config_path))
+        _, _, _, port = resolve_launch_source(None, 7000, config_path=config_path)
 
         assert port == 7000
 
@@ -967,30 +1013,100 @@ class TestResolveLaunchSource:
         # supplied via the CLI must be rejected, not silently accepted as it is today.
         cli_xlsx = tmp_path / "cli.xlsx"
         cli_xlsx.write_text("dummy")
-        config_path = tmp_path / "launch_config.json"
-        config_path.write_text(json.dumps({"excel_source": "https://example.com/share?e=1"}))
+        config_path = self._write_config(tmp_path)
 
         from absence_dashboard.app import resolve_launch_source
         with pytest.raises(FileNotFoundError, match="local-file support has been removed"):
-            resolve_launch_source(str(cli_xlsx), None, config_path=str(config_path))
+            resolve_launch_source(str(cli_xlsx), None, config_path=config_path)
 
     def test_nonexistent_local_cli_path_rejected(self, tmp_path):
-        config_path = tmp_path / "launch_config.json"
-        config_path.write_text(json.dumps({"excel_source": "https://example.com/share?e=1"}))
+        config_path = self._write_config(tmp_path)
 
         from absence_dashboard.app import resolve_launch_source
         with pytest.raises(FileNotFoundError, match="local-file support has been removed"):
             resolve_launch_source(
-                str(tmp_path / "does_not_exist.xlsx"), None, config_path=str(config_path)
+                str(tmp_path / "does_not_exist.xlsx"), None, config_path=config_path
             )
 
     def test_local_launch_config_source_rejected(self, tmp_path):
         # No CLI arg given; launch_config.json itself has a local (not URL) excel_source.
         xlsx = tmp_path / "absences.xlsx"
         xlsx.write_text("dummy")
-        config_path = tmp_path / "launch_config.json"
-        config_path.write_text(json.dumps({"excel_source": str(xlsx)}))
+        config_path = self._write_config(tmp_path, excel_source=str(xlsx))
 
         from absence_dashboard.app import resolve_launch_source
         with pytest.raises(FileNotFoundError, match="local-file support has been removed"):
-            resolve_launch_source(None, None, config_path=str(config_path))
+            resolve_launch_source(None, None, config_path=config_path)
+
+
+# ---------------------------------------------------------------------------
+# main() startup — token acquisition happens before create_app() (feature 004, US1)
+# ---------------------------------------------------------------------------
+
+class TestMainStartupTokenFlow:
+    CLIENT_ID = "11111111-1111-1111-1111-111111111111"
+    TENANT_ID = "22222222-2222-2222-2222-222222222222"
+
+    def _write_config(self, tmp_path, **overrides):
+        data = {
+            "excel_source": "https://example.com/share?e=1",
+            "client_id": self.CLIENT_ID,
+            "tenant_id": self.TENANT_ID,
+            "port": 5002,
+        }
+        data.update(overrides)
+        path = tmp_path / "launch_config.json"
+        path.write_text(json.dumps(data))
+        return path
+
+    def test_token_acquired_before_create_app(self, tmp_path, monkeypatch):
+        self._write_config(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys, "argv", ["run.py"])
+
+        call_order = []
+        fake_app = MagicMock()
+
+        def fake_acquire_token(client_id, tenant_id, cache_path, interactive_fallback=True):
+            call_order.append("acquire_token")
+            assert client_id == self.CLIENT_ID
+            assert tenant_id == self.TENANT_ID
+            return "token-abc"
+
+        def fake_create_app(source, access_token, client_id, tenant_id, state_path="state/state.json"):
+            call_order.append("create_app")
+            assert access_token == "token-abc"
+            assert client_id == self.CLIENT_ID
+            assert tenant_id == self.TENANT_ID
+            return fake_app
+
+        from absence_dashboard import app as app_module
+        monkeypatch.setattr(app_module.graph_auth, "acquire_token", fake_acquire_token)
+        monkeypatch.setattr(app_module, "create_app", fake_create_app)
+
+        app_module.main()
+
+        assert call_order == ["acquire_token", "create_app"]
+        fake_app.run.assert_called_once()
+
+    def test_token_acquisition_failure_exits_cleanly(self, tmp_path, monkeypatch, capsys):
+        self._write_config(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys, "argv", ["run.py"])
+
+        from absence_dashboard import app as app_module
+
+        def failing_acquire_token(*args, **kwargs):
+            raise RuntimeError("Signed-in session has expired. Restart the dashboard to sign in again.")
+
+        create_app_called = []
+        monkeypatch.setattr(app_module.graph_auth, "acquire_token", failing_acquire_token)
+        monkeypatch.setattr(app_module, "create_app", lambda *a, **k: create_app_called.append(1))
+
+        with pytest.raises(SystemExit) as exc_info:
+            app_module.main()
+
+        assert exc_info.value.code == 1
+        assert not create_app_called
+        captured = capsys.readouterr()
+        assert "restart the dashboard" in captured.err.lower()
