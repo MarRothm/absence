@@ -4,11 +4,15 @@
 
 ---
 
+> **Update (feature 003)**: the dashboard now connects directly to a SharePoint file link —
+> local-file paths are no longer supported. See
+> [specs/003-sharepoint-direct-connection/quickstart.md](../003-sharepoint-direct-connection/quickstart.md).
+
 ## Prerequisites
 
 - Python 3.11 or later
 - pip
-- The Excel spreadsheet file with absence data (`.xlsx` format)
+- A SharePoint "anyone with the link" share URL for the absence spreadsheet (`.xlsx` format)
 
 Verify Python version:
 
@@ -41,32 +45,18 @@ python3 --version
    pip install -r requirements.txt
    ```
 
-4. **Place your Excel file** in the project root (or note its path):
-
-   ```bash
-   # Example: cp ~/Downloads/absences.xlsx ./absences.xlsx
-   ```
-
 ---
 
 ## Running the Dashboard
 
-**Option A — local Excel file**:
-
 ```bash
-python app.py path/to/absences.xlsx
+python run.py "https://company.sharepoint.com/:x:/s/yoursite/ExxxxxxxxxxxxxxQ?e=xxxxxx"
 ```
 
-**Option B — SharePoint public share URL** (the link must be an "anyone with the link" share):
+The link must be an "anyone with the link" SharePoint share. The app appends `?download=1` and
+downloads the file anonymously before parsing (read-only — the source file is never modified).
 
-```bash
-python app.py "https://company.sharepoint.com/:x:/s/yoursite/ExxxxxxxxxxxxxxQ?e=xxxxxx"
-```
-
-The app detects the input type by its `http://`/`https://` scheme. For a SharePoint URL it
-appends `?download=1` and downloads the file anonymously before parsing.
-
-Open your browser and navigate to: **http://localhost:5000**
+Open your browser and navigate to: **http://localhost:5002**
 
 The dashboard loads immediately in **Migration Only** mode — only members marked with "x" in
 the "Projekt Migration" column are shown. Use the **"Show All / Migration Only"** toggle in the
@@ -160,10 +150,9 @@ before implementation and passing after.
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
 | "No migration members found" | No rows with "x" in "Projekt Migration" column (dashboard defaults to Migration Only mode) | Verify column name and "x" values in the Excel file; or switch to "All Entries" mode to see everyone |
-| "Cannot read Excel file" | Wrong file path or file open in Excel | Close Excel and verify the path |
 | "Cannot download from SharePoint URL" | URL is not a public share or network is unavailable | Verify the link is "anyone with the link" and accessible in a browser without login |
 | Skipped rows warning | Missing or malformed dates in some rows | Review flagged rows in the Excel file |
-| Port 5000 already in use | Another process using port 5000 | Run `python app.py path/to/file.xlsx --port 5001` |
+| Port 5002 already in use | Another process using port 5002 | Run `python run.py "https://..." --port 5003` |
 | "Column C/D not found" | Excel file has fewer columns than expected | Verify the file is the correct `.xlsx` and has data in columns C, D, and F+ |
 
 ---

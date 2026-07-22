@@ -10,9 +10,13 @@ full setup and usage instructions.
 
 ```bash
 pip install -r requirements.txt
-python run.py path/to/absences.xlsx
+python run.py "https://company.sharepoint.com/:x:/s/yoursite/Exxxxxxxxxxxxxxx?e=xxxxxx"
 # Open http://localhost:5002
 ```
+
+A SharePoint "anyone with the link" share URL is the only supported data source — local file paths
+are no longer accepted (see
+[specs/003-sharepoint-direct-connection/quickstart.md](specs/003-sharepoint-direct-connection/quickstart.md)).
 
 ## Standalone Windows Build (Citrix / Server 2016)
 
