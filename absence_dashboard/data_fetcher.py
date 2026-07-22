@@ -1,6 +1,14 @@
 import io
 import requests
+import truststore
 from openpyxl import load_workbook
+
+# Corporate networks commonly run a TLS-inspecting proxy that re-signs HTTPS traffic with
+# an internal root CA. Windows trusts that CA in its own certificate store, but requests'
+# bundled certifi CA list does not — inject the OS-native trust store (SChannel on Windows,
+# Security framework on macOS, system OpenSSL config on Linux) so SharePoint downloads work
+# on networks like that, without disabling certificate verification.
+truststore.inject_into_ssl()
 
 
 def get_workbook(source: str):
