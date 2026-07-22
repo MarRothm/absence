@@ -9,6 +9,15 @@ from absence_dashboard.launch_config import load_launch_config, DEFAULT_PORT
 
 
 class TestLoadLaunchConfig:
+    def test_malformed_json_raises_actionable_error(self, tmp_path):
+        # Real-world failure (found via manual testing on Windows): a raw Windows path
+        # with single backslashes, e.g. copy-pasted from Explorer, is invalid JSON.
+        path = tmp_path / "launch_config.json"
+        path.write_text('{\n  "excel_source": "C:\\Users\\me\\absences.xlsx"\n}')
+
+        with pytest.raises(FileNotFoundError, match="backslash"):
+            load_launch_config(str(path))
+
     def test_valid_config_returns_source_and_port(self, tmp_path):
         xlsx = tmp_path / "absences.xlsx"
         xlsx.write_text("dummy")
