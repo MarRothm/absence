@@ -146,12 +146,12 @@ def _assemble_dashboard(app) -> dict:
 # Application factory
 # ---------------------------------------------------------------------------
 
-def create_app(excel_path: str, state_path: str = "state/state.json") -> Flask:
+def create_app(excel_source: str, state_path: str = "state/state.json") -> Flask:
     app = Flask(__name__, static_folder="static")
 
-    members, skipped, last_loaded = _load_excel(excel_path)
+    members, skipped, last_loaded = _load_excel(excel_source)
     app.config.update({
-        "EXCEL_PATH": excel_path,
+        "EXCEL_SOURCE": excel_source,
         "STATE_PATH": state_path,
         "MEMBERS": members,
         "SKIPPED_ROWS": skipped,
@@ -182,7 +182,7 @@ def create_app(excel_path: str, state_path: str = "state/state.json") -> Flask:
     @app.route("/api/refresh", methods=["POST"])
     def post_refresh():
         try:
-            members, skipped, last_loaded = _load_excel(app.config["EXCEL_PATH"])
+            members, skipped, last_loaded = _load_excel(app.config["EXCEL_SOURCE"])
         except Exception as e:
             return jsonify({"error": str(e), "stale_data": True}), 422
 
@@ -472,12 +472,17 @@ def create_app(excel_path: str, state_path: str = "state/state.json") -> Flask:
 def resolve_launch_source(excel_file, port_arg, config_path="launch_config.json"):
     """Resolve (source, port) from CLI args, falling back to launch_config.json when
     excel_file is not supplied (the packaged/double-click launch case — see
-    specs/002-windows-standalone-build/contracts/launch-config.md). Raises
-    FileNotFoundError with an actionable message when neither path yields a usable source.
+    specs/002-windows-standalone-build/contracts/launch-config.md). excel_file must be a
+    SharePoint link (http:// or https://) — local-file paths are no longer supported
+    (feature 003), even ones that exist on disk. Raises FileNotFoundError with an
+    actionable message when neither path yields a usable SharePoint source.
     """
     if excel_file is not None:
-        if not excel_file.startswith(("http://", "https://")) and not os.path.exists(excel_file):
-            raise FileNotFoundError(f"File not found: {excel_file}")
+        if not excel_file.startswith(("http://", "https://")):
+            raise FileNotFoundError(
+                f"'{excel_file}' is not a SharePoint link — local-file support has been "
+                "removed. Pass a SharePoint share URL (http:// or https://) instead."
+            )
         return excel_file, port_arg if port_arg is not None else DEFAULT_PORT
 
     source, config_port = load_launch_config(config_path)
@@ -502,7 +507,7 @@ if __name__ == "__main__":
 
     try:
         application = create_app(source)
-    except (ConnectionError, FileNotFoundError) as e:
+    except ConnectionError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
     try:

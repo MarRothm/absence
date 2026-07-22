@@ -383,7 +383,7 @@ class TestRefresh:
         alice = get_member(data, "Alice")
         assert "Backend" in alice["clusters"]
 
-    def test_refresh_stale_dependency_removed(self, app, client, tmp_path):
+    def test_refresh_stale_dependency_removed(self, app, client, tmp_path, monkeypatch):
         # Add a dependency, then replace the Excel with a file that has no "Alice"
         client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
         # Build a minimal workbook with only Bob and Carol
@@ -396,9 +396,18 @@ class TestRefresh:
         ws.cell(row=3, column=4, value="Bob")
         ws.cell(row=4, column=3, value="x")
         ws.cell(row=4, column=4, value="Carol")
-        new_path = str(tmp_path / "updated.xlsx")
-        wb.save(new_path)
-        app.config["EXCEL_PATH"] = new_path
+        new_path = tmp_path / "updated.xlsx"
+        wb.save(str(new_path))
+        # get_workbook() only accepts SharePoint (http/https) sources (feature 003) — mock the
+        # fetch instead of pointing EXCEL_SOURCE at a local path (same technique as conftest.py's
+        # app fixture).
+        monkeypatch.setattr(
+            "absence_dashboard.data_fetcher.requests.get",
+            lambda *args, **kwargs: type(
+                "_FakeResponse", (), {"content": new_path.read_bytes(), "status_code": 200}
+            )(),
+        )
+        app.config["EXCEL_SOURCE"] = "https://fake.sharepoint.example/updated.xlsx?e=test"
         rv = client.post("/api/refresh")
         assert rv.status_code == 200
         result = rv.get_json()
@@ -916,34 +925,30 @@ class TestPoolDependenciesAPI:
 
 class TestResolveLaunchSource:
     def test_cli_arg_takes_precedence_over_launch_config(self, tmp_path):
-        cli_xlsx = tmp_path / "cli.xlsx"
-        cli_xlsx.write_text("dummy")
         config_path = tmp_path / "launch_config.json"
-        config_path.write_text(json.dumps({"excel_source": "config.xlsx", "port": 9999}))
+        config_path.write_text(json.dumps({"excel_source": "https://config.example.com/share?e=1", "port": 9999}))
 
         from absence_dashboard.app import resolve_launch_source
-        source, port = resolve_launch_source(str(cli_xlsx), None, config_path=str(config_path))
+        source, port = resolve_launch_source(
+            "https://cli.example.com/share?e=1", None, config_path=str(config_path)
+        )
 
-        assert source == str(cli_xlsx)
+        assert source == "https://cli.example.com/share?e=1"
         assert port == 5002  # existing CLI default, NOT launch_config's 9999
 
     def test_no_cli_arg_falls_back_to_launch_config(self, tmp_path):
-        xlsx = tmp_path / "absences.xlsx"
-        xlsx.write_text("dummy")
         config_path = tmp_path / "launch_config.json"
-        config_path.write_text(json.dumps({"excel_source": str(xlsx), "port": 6100}))
+        config_path.write_text(json.dumps({"excel_source": "https://example.com/share?e=1", "port": 6100}))
 
         from absence_dashboard.app import resolve_launch_source
         source, port = resolve_launch_source(None, None, config_path=str(config_path))
 
-        assert source == str(xlsx)
+        assert source == "https://example.com/share?e=1"
         assert port == 6100
 
     def test_explicit_cli_port_overrides_launch_config_port(self, tmp_path):
-        xlsx = tmp_path / "absences.xlsx"
-        xlsx.write_text("dummy")
         config_path = tmp_path / "launch_config.json"
-        config_path.write_text(json.dumps({"excel_source": str(xlsx), "port": 6100}))
+        config_path.write_text(json.dumps({"excel_source": "https://example.com/share?e=1", "port": 6100}))
 
         from absence_dashboard.app import resolve_launch_source
         source, port = resolve_launch_source(None, 7000, config_path=str(config_path))
@@ -957,10 +962,35 @@ class TestResolveLaunchSource:
         with pytest.raises(FileNotFoundError):
             resolve_launch_source(None, None, config_path=str(config_path))
 
-    def test_nonexistent_cli_path_raises_file_not_found(self, tmp_path):
+    def test_existing_local_cli_path_rejected(self, tmp_path):
+        # Local-file support was removed (feature 003) — even an existing local path
+        # supplied via the CLI must be rejected, not silently accepted as it is today.
+        cli_xlsx = tmp_path / "cli.xlsx"
+        cli_xlsx.write_text("dummy")
         config_path = tmp_path / "launch_config.json"
-        config_path.write_text(json.dumps({"excel_source": "irrelevant.xlsx"}))
+        config_path.write_text(json.dumps({"excel_source": "https://example.com/share?e=1"}))
 
         from absence_dashboard.app import resolve_launch_source
-        with pytest.raises(FileNotFoundError):
-            resolve_launch_source(str(tmp_path / "does_not_exist.xlsx"), None, config_path=str(config_path))
+        with pytest.raises(FileNotFoundError, match="local-file support has been removed"):
+            resolve_launch_source(str(cli_xlsx), None, config_path=str(config_path))
+
+    def test_nonexistent_local_cli_path_rejected(self, tmp_path):
+        config_path = tmp_path / "launch_config.json"
+        config_path.write_text(json.dumps({"excel_source": "https://example.com/share?e=1"}))
+
+        from absence_dashboard.app import resolve_launch_source
+        with pytest.raises(FileNotFoundError, match="local-file support has been removed"):
+            resolve_launch_source(
+                str(tmp_path / "does_not_exist.xlsx"), None, config_path=str(config_path)
+            )
+
+    def test_local_launch_config_source_rejected(self, tmp_path):
+        # No CLI arg given; launch_config.json itself has a local (not URL) excel_source.
+        xlsx = tmp_path / "absences.xlsx"
+        xlsx.write_text("dummy")
+        config_path = tmp_path / "launch_config.json"
+        config_path.write_text(json.dumps({"excel_source": str(xlsx)}))
+
+        from absence_dashboard.app import resolve_launch_source
+        with pytest.raises(FileNotFoundError, match="local-file support has been removed"):
+            resolve_launch_source(None, None, config_path=str(config_path))

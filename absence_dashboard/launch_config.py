@@ -8,8 +8,9 @@ DEFAULT_PORT = 5002
 def load_launch_config(path):
     """Load (excel_source, port) from a launch_config.json file.
 
-    Raises FileNotFoundError — with the same message style as app.py's existing
-    file-not-found path — if the config file is missing or excel_source is missing/invalid.
+    excel_source must be a SharePoint link (http:// or https://) — local-file paths are no
+    longer supported (feature 003), even ones that exist on disk. Raises FileNotFoundError
+    if the config file is missing, excel_source is missing, or excel_source is not a URL.
     An invalid or missing port falls back to DEFAULT_PORT with a warning on stderr.
     """
     if not os.path.exists(path):
@@ -19,9 +20,14 @@ def load_launch_config(path):
         data = json.load(f)
 
     excel_source = data.get("excel_source")
-    is_url = isinstance(excel_source, str) and excel_source.startswith(("http://", "https://"))
-    if not excel_source or (not is_url and not os.path.exists(excel_source)):
-        raise FileNotFoundError(f"File not found: {excel_source!r} (excel_source in {path})")
+    if not excel_source:
+        raise FileNotFoundError(f"'excel_source' is missing from {path}.")
+    if not isinstance(excel_source, str) or not excel_source.startswith(("http://", "https://")):
+        raise FileNotFoundError(
+            f"'excel_source' in {path} ({excel_source!r}) is not a SharePoint link — "
+            "local-file support has been removed. Set excel_source to a SharePoint share "
+            "URL (http:// or https://) instead."
+        )
 
     port = data.get("port", DEFAULT_PORT)
     if not isinstance(port, int) or isinstance(port, bool) or port <= 0:
