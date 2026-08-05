@@ -66,9 +66,20 @@ function buildDayIndex(weeks) {
   return days;
 }
 
+// Groups a member's cumul_risks (or sole_coverage) entries by week_number.
+// Returns a Map: week_number → [group name, ...]
+function groupByWeek(entries) {
+  const map = new Map();
+  (entries || []).forEach(({ group, week_number }) => {
+    if (!map.has(week_number)) map.set(week_number, []);
+    map.get(week_number).push(group);
+  });
+  return map;
+}
+
 // For each day in dayIndex, compute the absence CSS class for this member.
 // Returns a map: date-string → class string (or "")
-function computeDayClasses(mergedBlocks, dayIndex, deadlockWeeks) {
+function computeDayClasses(mergedBlocks, dayIndex, cumulRiskWeekMap) {
   const absentDates = new Set();
   mergedBlocks.forEach(block => {
     dayIndex.forEach(({ date }) => {
@@ -76,15 +87,14 @@ function computeDayClasses(mergedBlocks, dayIndex, deadlockWeeks) {
     });
   });
 
-  const deadlockWeekSet = new Set(deadlockWeeks || []);
   const result = {};
   dayIndex.forEach(({ date: d, week }, i) => {
     const prev = i > 0 ? dayIndex[i - 1].date : null;
     const next = i < dayIndex.length - 1 ? dayIndex[i + 1].date : null;
     const absent = absentDates.has(d);
 
-    if (deadlockWeekSet.has(week)) {
-      result[d] = "deadlock";
+    if (absent && cumulRiskWeekMap.has(week)) {
+      result[d] = "cumul-risk";
     } else if (absent) {
       const prevAbsent = prev && absentDates.has(prev);
       const nextAbsent = next && absentDates.has(next);
@@ -144,20 +154,20 @@ function renderTimeline(data) {
   grid.appendChild(dayHeaderRow);
 
   // ---- Phase banner rows (one per phase, overlapping phases stack) ----
-  const deadlockWeekSet = new Set(
-    data.members.flatMap(m => m.deadlock_weeks || [])
+  const cumulRiskWeekSet = new Set(
+    data.members.flatMap(m => (m.cumul_risks || []).map(r => r.week_number))
   );
 
   (data.phases || []).forEach(phase => {
     const row = document.createElement("div");
     row.className = "tg-row tg-phase-row";
 
-    // Mark phase row if any of its days fall in a deadlock CW
-    const phaseHasDeadlock = dayIndex.some(
+    // Mark phase row if any of its days fall in a cumul-risk CW
+    const phaseHasCumulRisk = dayIndex.some(
       ({ date: d, week }) =>
-        d >= phase.start_date && d <= phase.end_date && deadlockWeekSet.has(week)
+        d >= phase.start_date && d <= phase.end_date && cumulRiskWeekSet.has(week)
     );
-    if (phaseHasDeadlock) row.classList.add("phase-has-deadlock");
+    if (phaseHasCumulRisk) row.classList.add("phase-has-cumul-risk");
 
     const nameCell = document.createElement("div");
     nameCell.className = "tg-name";
@@ -202,7 +212,6 @@ function renderTimeline(data) {
 
     const row = document.createElement("div");
     row.className = "tg-row";
-    if (member.is_bottleneck) row.classList.add("is-bottleneck");
 
     // FR-027: hide non-migration rows in "Migration Only" mode
     if (!member.is_migration_member) {
@@ -213,22 +222,28 @@ function renderTimeline(data) {
       }
     }
 
+    const soleCoverageWeekMap = groupByWeek(member.sole_coverage);
+    if (soleCoverageWeekMap.size > 0) row.classList.add("is-sole-coverage");
+
     const nameCellEl = document.createElement("div");
     nameCellEl.className = "tg-name";
     nameCellEl.textContent = member.name;
-    if (member.is_bottleneck) {
+    const soleGroups = [...new Set((member.sole_coverage || []).map(r => r.group))];
+    soleGroups.forEach(groupName => {
+      const weeks = (member.sole_coverage || [])
+        .filter(r => r.group === groupName)
+        .map(r => r.week_number);
       const badge = document.createElement("span");
-      badge.className = "bottleneck-badge";
-      badge.textContent = "BN";
-      badge.title = "Bottleneck: 2+ dependencies";
+      badge.className = "sole-coverage-badge";
+      badge.textContent = "Sole";
+      badge.title = `Sole coverage for "${groupName}": CW${weeks.join(", CW")}`;
       nameCellEl.appendChild(badge);
-    }
+    });
     row.appendChild(nameCellEl);
 
-    const dayClasses = computeDayClasses(
-      member.merged_blocks, dayIndex, member.deadlock_weeks
-    );
-    const memberDeadlockWeekSet = new Set(member.deadlock_weeks || []);
+    const cumulRiskWeekMap = groupByWeek(member.cumul_risks);
+    const dayClasses = computeDayClasses(member.merged_blocks, dayIndex, cumulRiskWeekMap);
+    const labeledWeeks = new Set();
 
     dayIndex.forEach(({ date: d, week }, i) => {
       const cell = document.createElement("div");
@@ -238,12 +253,14 @@ function renderTimeline(data) {
 
       if (i % 5 === 0) cell.classList.add("week-start");
 
-      if (cls === "deadlock") {
-        cell.title = `Deadlock CW${week}: all pool members absent`;
-        if (i % 5 === 0) {
+      if (cls === "cumul-risk") {
+        const groups = cumulRiskWeekMap.get(week) || [];
+        cell.title = `Cumul risk CW${week}: ${groups.join(", ")}`;
+        if (!labeledWeeks.has(week)) {
+          labeledWeeks.add(week);
           const label = document.createElement("span");
-          label.className = "deadlock-label";
-          label.textContent = "Deadlock";
+          label.className = "cumul-risk-label";
+          label.textContent = "Cumul risk";
           cell.appendChild(label);
         }
       } else {
@@ -329,178 +346,6 @@ function clearInlineError(container) {
   const errEl = container.querySelector(".inline-edit-error");
   if (errEl) errEl.remove();
 }
-
-// ---------------------------------------------------------------------------
-// Dependency panel  (US2 + Phase 11 inline edit)
-// ---------------------------------------------------------------------------
-
-function renderDependencies(data) {
-  const fromSel = document.getElementById("dep-from");
-  const toSel   = document.getElementById("dep-to");
-  const list    = document.getElementById("dep-list");
-  // FR-027: management panels always scoped to migration members only
-  const names   = data.members.filter(m => m.is_migration_member).map(m => m.name).sort();
-
-  // Refresh "from" single-select
-  const currentFrom = fromSel.value;
-  fromSel.innerHTML = `<option value="">— select —</option>`;
-  names.forEach(n => {
-    const opt = document.createElement("option");
-    opt.value = opt.textContent = n;
-    if (n === currentFrom) opt.selected = true;
-    fromSel.appendChild(opt);
-  });
-
-  // Refresh "to" multi-select (preserve current selections)
-  const currentTo = new Set(
-    Array.from(toSel.selectedOptions).map(o => o.value)
-  );
-  toSel.innerHTML = "";
-  names.forEach(n => {
-    const opt = document.createElement("option");
-    opt.value = opt.textContent = n;
-    if (currentTo.has(n)) opt.selected = true;
-    toSel.appendChild(opt);
-  });
-
-  list.innerHTML = "";
-  data.dependencies.forEach(dep => {
-    const li = document.createElement("li");
-    const toLabel = (dep.to_members || []).join(", ");
-
-    // --- display view ---
-    const displayDiv = document.createElement("div");
-    displayDiv.className = "item-display";
-    const rangeText = dep.active_from
-      ? ` (${dep.active_from} – ${dep.active_to})`
-      : "";
-    displayDiv.innerHTML =
-      `<span>${dep.from_member} → ${toLabel}<span class="cluster-item-members">${rangeText}</span></span>`;
-
-    const editBtn = document.createElement("button");
-    editBtn.className = "btn-edit";
-    editBtn.textContent = "Edit";
-    editBtn.title = "Edit dependency";
-
-    const removeBtn = document.createElement("button");
-    removeBtn.className = "btn-remove";
-    removeBtn.textContent = "✕";
-    removeBtn.title = "Remove dependency";
-    removeBtn.onclick = async () => {
-      const body = { from_member: dep.from_member, to_members: dep.to_members };
-      if (dep.active_from) { body.active_from = dep.active_from; body.active_to = dep.active_to; }
-      const res = await apiFetch("/api/dependencies", "DELETE", body);
-      if (res.ok) { await refreshDashboard(); } else {
-        showWarning(`Could not remove dependency: ${res.data.error}`);
-      }
-    };
-    displayDiv.appendChild(editBtn);
-    displayDiv.appendChild(removeBtn);
-
-    // --- edit view ---
-    const editDiv = document.createElement("div");
-    editDiv.className = "item-edit hidden";
-
-    const newFromSel = makeSelect(names, dep.from_member, "edit-select");
-    const arrow = document.createElement("span");
-    arrow.textContent = " → ";
-
-    const newToSel = document.createElement("select");
-    newToSel.multiple = true;
-    newToSel.className = "edit-select-multi";
-    names.forEach(n => {
-      const opt = document.createElement("option");
-      opt.value = opt.textContent = n;
-      if ((dep.to_members || []).includes(n)) opt.selected = true;
-      newToSel.appendChild(opt);
-    });
-
-    const newActiveFrom = document.createElement("input");
-    newActiveFrom.type = "date";
-    newActiveFrom.className = "edit-input";
-    newActiveFrom.value = dep.active_from || "";
-    newActiveFrom.title = "Active from (optional)";
-
-    const dash = document.createElement("span");
-    dash.textContent = " – ";
-
-    const newActiveTo = document.createElement("input");
-    newActiveTo.type = "date";
-    newActiveTo.className = "edit-input";
-    newActiveTo.value = dep.active_to || "";
-    newActiveTo.title = "Active to (optional)";
-
-    const saveBtn = document.createElement("button");
-    saveBtn.className = "btn-save";
-    saveBtn.textContent = "Save";
-
-    const cancelBtn = document.createElement("button");
-    cancelBtn.className = "btn-cancel";
-    cancelBtn.textContent = "Cancel";
-
-    editDiv.append(newFromSel, arrow, newToSel, newActiveFrom, dash, newActiveTo, saveBtn, cancelBtn);
-
-    editBtn.onclick = () => {
-      displayDiv.classList.add("hidden");
-      editDiv.classList.remove("hidden");
-    };
-    cancelBtn.onclick = () => {
-      clearInlineError(editDiv);
-      Array.from(newToSel.options).forEach(o => {
-        o.selected = (dep.to_members || []).includes(o.value);
-      });
-      displayDiv.classList.remove("hidden");
-      editDiv.classList.add("hidden");
-    };
-    saveBtn.onclick = async () => {
-      clearInlineError(editDiv);
-      const newToMembers = Array.from(newToSel.selectedOptions).map(o => o.value);
-      const body = {
-        old_from: dep.from_member,
-        old_to_members: dep.to_members,
-        old_active_from: dep.active_from || null,
-        old_active_to: dep.active_to || null,
-        new_from: newFromSel.value,
-        new_to_members: newToMembers,
-        new_active_from: newActiveFrom.value || null,
-        new_active_to: newActiveTo.value || null,
-      };
-      const res = await apiFetch("/api/dependencies", "PUT", body);
-      if (res.ok) {
-        await refreshDashboard();
-      } else {
-        showInlineError(editDiv, res.data.error || "Could not save dependency.");
-      }
-    };
-
-    li.appendChild(displayDiv);
-    li.appendChild(editDiv);
-    list.appendChild(li);
-  });
-}
-
-document.getElementById("btn-add-dep").addEventListener("click", async () => {
-  const from       = document.getElementById("dep-from").value;
-  const toMembers  = Array.from(
-    document.getElementById("dep-to").selectedOptions
-  ).map(o => o.value);
-  const activeFrom = document.getElementById("dep-active-from").value || null;
-  const activeTo   = document.getElementById("dep-active-to").value || null;
-  const errEl = document.getElementById("dep-error");
-  errEl.classList.add("hidden");
-  if (!from || toMembers.length === 0) return;
-  const body = { from_member: from, to_members: toMembers };
-  if (activeFrom) { body.active_from = activeFrom; body.active_to = activeTo; }
-  const res = await apiFetch("/api/dependencies", "POST", body);
-  if (res.ok) {
-    document.getElementById("dep-active-from").value = "";
-    document.getElementById("dep-active-to").value = "";
-    await refreshDashboard();
-  } else {
-    errEl.textContent = res.data.error || "Could not add dependency.";
-    errEl.classList.remove("hidden");
-  }
-});
 
 // ---------------------------------------------------------------------------
 // Cluster panel  (US4 + Phase 11 inline edit)
@@ -749,6 +594,163 @@ document.getElementById("btn-add-phase").addEventListener("click", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Cumul group panel  (US1 + US2)
+// ---------------------------------------------------------------------------
+
+function renderCumulGroups(data) {
+  const membersSelect = document.getElementById("cumul-members");
+  const list          = document.getElementById("cumul-list");
+  // FR-027: management panels always scoped to migration members only
+  const names         = data.members.filter(m => m.is_migration_member).map(m => m.name).sort();
+
+  const selectedValues = Array.from(membersSelect.selectedOptions).map(o => o.value);
+  membersSelect.innerHTML = "";
+  names.forEach(n => {
+    const opt = document.createElement("option");
+    opt.value = opt.textContent = n;
+    if (selectedValues.includes(n)) opt.selected = true;
+    membersSelect.appendChild(opt);
+  });
+
+  list.innerHTML = "";
+  (data.cumul_groups || []).forEach(group => {
+    const li = document.createElement("li");
+
+    // --- display view ---
+    const displayDiv = document.createElement("div");
+    displayDiv.className = "item-display";
+    const activeRange = group.active_from
+      ? ` <span class="cluster-item-members">(${group.active_from} – ${group.active_to})</span>`
+      : "";
+    displayDiv.innerHTML = `<span><strong>${group.name}</strong> <span class="cluster-item-members">${group.members.join(", ")}</span>${activeRange}</span>`;
+
+    const editBtn = document.createElement("button");
+    editBtn.className = "btn-edit";
+    editBtn.textContent = "Edit";
+    editBtn.title = "Edit cumul group";
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "btn-remove";
+    removeBtn.textContent = "✕";
+    removeBtn.title = "Delete cumul group";
+    removeBtn.onclick = async () => {
+      const res = await apiFetch(`/api/cumul-groups/${encodeURIComponent(group.name)}`, "DELETE");
+      if (res.ok) { await refreshDashboard(); } else {
+        showWarning(`Could not delete cumul group: ${res.data.error}`);
+      }
+    };
+    displayDiv.appendChild(editBtn);
+    displayDiv.appendChild(removeBtn);
+
+    // --- edit view ---
+    const editDiv = document.createElement("div");
+    editDiv.className = "item-edit hidden";
+
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.className = "edit-input";
+    nameInput.value = group.name;
+    nameInput.placeholder = "Group name";
+
+    const membersMulti = document.createElement("select");
+    membersMulti.multiple = true;
+    membersMulti.className = "edit-select-multi";
+    names.forEach(n => {
+      const opt = document.createElement("option");
+      opt.value = opt.textContent = n;
+      if (group.members.includes(n)) opt.selected = true;
+      membersMulti.appendChild(opt);
+    });
+
+    const activeFromInput = document.createElement("input");
+    activeFromInput.type = "date";
+    activeFromInput.className = "edit-input";
+    activeFromInput.value = group.active_from || "";
+
+    const activeToInput = document.createElement("input");
+    activeToInput.type = "date";
+    activeToInput.className = "edit-input";
+    activeToInput.value = group.active_to || "";
+
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "btn-save";
+    saveBtn.textContent = "Save";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn-cancel";
+    cancelBtn.textContent = "Cancel";
+
+    editDiv.append(nameInput, membersMulti, activeFromInput, activeToInput, saveBtn, cancelBtn);
+
+    editBtn.onclick = () => {
+      displayDiv.classList.add("hidden");
+      editDiv.classList.remove("hidden");
+    };
+    cancelBtn.onclick = () => {
+      clearInlineError(editDiv);
+      nameInput.value = group.name;
+      Array.from(membersMulti.options).forEach(o => {
+        o.selected = group.members.includes(o.value);
+      });
+      activeFromInput.value = group.active_from || "";
+      activeToInput.value = group.active_to || "";
+      displayDiv.classList.remove("hidden");
+      editDiv.classList.add("hidden");
+    };
+    saveBtn.onclick = async () => {
+      clearInlineError(editDiv);
+      const newName = nameInput.value.trim();
+      const newMembers = Array.from(membersMulti.selectedOptions).map(o => o.value);
+      const body = {
+        name: newName,
+        members: newMembers,
+        active_from: activeFromInput.value || null,
+        active_to: activeToInput.value || null,
+      };
+      const res = await apiFetch(
+        `/api/cumul-groups/${encodeURIComponent(group.name)}`, "PUT", body
+      );
+      if (res.ok) {
+        await refreshDashboard();
+      } else {
+        showInlineError(editDiv, res.data.error || "Could not save cumul group.");
+      }
+    };
+
+    li.appendChild(displayDiv);
+    li.appendChild(editDiv);
+    list.appendChild(li);
+  });
+}
+
+document.getElementById("btn-add-cumul").addEventListener("click", async () => {
+  const name = document.getElementById("cumul-name").value.trim();
+  const members = Array.from(
+    document.getElementById("cumul-members").selectedOptions
+  ).map(o => o.value);
+  const activeFrom = document.getElementById("cumul-active-from").value;
+  const activeTo = document.getElementById("cumul-active-to").value;
+  const errEl = document.getElementById("cumul-error");
+  errEl.classList.add("hidden");
+  if (!name) return;
+  const body = { name, members };
+  if (activeFrom || activeTo) {
+    body.active_from = activeFrom || null;
+    body.active_to = activeTo || null;
+  }
+  const res = await apiFetch("/api/cumul-groups", "POST", body);
+  if (res.ok) {
+    document.getElementById("cumul-name").value = "";
+    document.getElementById("cumul-active-from").value = "";
+    document.getElementById("cumul-active-to").value = "";
+    await refreshDashboard();
+  } else {
+    errEl.textContent = res.data.error || "Could not create cumul group.";
+    errEl.classList.remove("hidden");
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Display mode toggle  (FR-027)
 // ---------------------------------------------------------------------------
 
@@ -767,8 +769,8 @@ document.getElementById("btn-toggle-filter").addEventListener("click", () => {
 document.getElementById("btn-toggle-phases").addEventListener("click", () => {
   document.getElementById("phase-panel").classList.toggle("hidden");
 });
-document.getElementById("btn-toggle-deps").addEventListener("click", () => {
-  document.getElementById("dependency-panel").classList.toggle("hidden");
+document.getElementById("btn-toggle-cumul").addEventListener("click", () => {
+  document.getElementById("cumul-panel").classList.toggle("hidden");
 });
 document.getElementById("btn-toggle-clusters").addEventListener("click", () => {
   document.getElementById("cluster-panel").classList.toggle("hidden");
@@ -788,7 +790,7 @@ document.getElementById("btn-reload").addEventListener("click", async () => {
       dashboardData = res.data;
       updateLastLoaded(dashboardData.last_loaded);
       renderTimeline(dashboardData);
-      renderDependencies(dashboardData);
+      renderCumulGroups(dashboardData);
       renderClusters(dashboardData);
       renderPhases(dashboardData);
       clearWarnings();
@@ -826,7 +828,7 @@ async function refreshDashboard() {
   dashboardData = res.data;
   updateLastLoaded(dashboardData.last_loaded);
   renderTimeline(dashboardData);
-  renderDependencies(dashboardData);
+  renderCumulGroups(dashboardData);
   renderClusters(dashboardData);
   renderPhases(dashboardData);
   if (dashboardData.skipped_rows && dashboardData.skipped_rows.length > 0) {
