@@ -14,7 +14,7 @@
       <button id="btn-reload" class="btn btn-reload" title="Reload Excel data">⟳ Reload</button>
       <button id="btn-toggle-filter" class="btn btn-filter" title="Toggle between migration team and all entries">Migration Only</button>
       <button id="btn-toggle-phases" class="btn btn-secondary">Phases</button>
-      <button id="btn-toggle-deps" class="btn btn-secondary">Dependencies</button>
+      <button id="btn-toggle-cumul" class="btn btn-secondary">Cumul</button>
       <button id="btn-toggle-clusters" class="btn btn-secondary">Clusters</button>
     </div>
   </header>
@@ -44,25 +44,30 @@
       <ul id="phase-list" class="item-list"></ul>
     </aside>
 
-    <aside id="dependency-panel" class="side-panel hidden">
-      <h2>Dependencies</h2>
+    <aside id="cumul-panel" class="side-panel hidden">
+      <h2>Cumul Groups</h2>
+      <p class="cumul-definition">
+        A <strong>cumul</strong> is flagged for a week only when every group member's own absence
+        block is longer than 5 calendar days <em>and</em> those critical absences share at least
+        one common day in that week.
+      </p>
       <div class="panel-form">
-        <label>From (at-risk person)
-          <select id="dep-from"><option value="">— select —</option></select>
+        <label>Group name
+          <input type="text" id="cumul-name" placeholder="e.g. Backend Coverage">
         </label>
-        <label>To pool (one or more)
-          <select id="dep-to" multiple size="4"></select>
+        <label>Members (two or more)
+          <select id="cumul-members" multiple size="5"></select>
         </label>
         <label>Active from (optional)
-          <input type="date" id="dep-active-from">
+          <input type="date" id="cumul-active-from">
         </label>
         <label>Active to (optional)
-          <input type="date" id="dep-active-to">
+          <input type="date" id="cumul-active-to">
         </label>
-        <button id="btn-add-dep" class="btn btn-primary">Add Dependency</button>
-        <div id="dep-error" class="inline-error hidden"></div>
+        <button id="btn-add-cumul" class="btn btn-primary">Create Cumul Group</button>
+        <div id="cumul-error" class="inline-error hidden"></div>
       </div>
-      <ul id="dep-list" class="item-list"></ul>
+      <ul id="cumul-list" class="item-list"></ul>
     </aside>
 
     <aside id="cluster-panel" class="side-panel hidden">

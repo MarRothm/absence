@@ -5,21 +5,9 @@ from dataclasses import dataclass, field
 
 @dataclass
 class AppState:
-    dependencies: list = field(default_factory=list)
+    cumul_groups: list = field(default_factory=list)
     clusters: list = field(default_factory=list)
     phases: list = field(default_factory=list)
-
-
-def _migrate_dependencies(deps: list) -> list:
-    migrated = []
-    for d in deps:
-        if "to_member" in d and "to_members" not in d:
-            entry = {k: v for k, v in d.items() if k != "to_member"}
-            entry["to_members"] = [d["to_member"]]
-            migrated.append(entry)
-        else:
-            migrated.append(d)
-    return migrated
 
 
 def load_state(path: str) -> AppState:
@@ -28,7 +16,7 @@ def load_state(path: str) -> AppState:
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
     return AppState(
-        dependencies=_migrate_dependencies(data.get("dependencies", [])),
+        cumul_groups=data.get("cumul_groups", []),
         clusters=data.get("clusters", []),
         phases=data.get("phases", []),
     )
@@ -40,6 +28,6 @@ def save_state(state: AppState, path: str) -> None:
         os.makedirs(dir_name, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(
-            {"dependencies": state.dependencies, "clusters": state.clusters, "phases": state.phases},
+            {"cumul_groups": state.cumul_groups, "clusters": state.clusters, "phases": state.phases},
             f, indent=2,
         )

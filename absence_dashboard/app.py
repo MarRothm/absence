@@ -12,8 +12,15 @@ from absence_dashboard import data_fetcher
 from absence_dashboard.parser import parse_members
 from absence_dashboard.merger import merge_periods
 from absence_dashboard.state import load_state, save_state, AppState
-from absence_dashboard.graph import DependencyGraph
 from absence_dashboard.phases_manager import add_phase, remove_phase, update_phase
+from absence_dashboard.cumul_groups import (
+    add_cumul_group,
+    remove_cumul_group,
+    update_cumul_group,
+    critical_absence_days,
+    compute_cumul_risk_weeks,
+    compute_sole_coverage_weeks,
+)
 from absence_dashboard.launch_config import load_launch_config, DEFAULT_PORT
 
 
@@ -90,40 +97,36 @@ def _assemble_dashboard(app) -> dict:
     members = app.config["MEMBERS"]
     state = app.config["STATE"]
     calendar_weeks = _build_calendar_weeks()
-    deps = state.dependencies
 
-    member_absence_date_sets = {
-        m.name: {
-            d
-            for block in m.merged_blocks
-            for d in (
-                block.start_date + timedelta(days=i)
-                for i in range((block.end_date - block.start_date).days + 1)
-            )
-        }
-        for m in members
-    }
-
-    bottleneck_weights = DependencyGraph.compute_bottleneck_weights(
-        deps, member_absence_date_sets, calendar_weeks
-    )
+    member_critical_date_sets = {m.name: critical_absence_days(m.merged_blocks) for m in members}
+    cumul_risks_by_member: dict = {}
+    sole_coverage_by_member: dict = {}
+    for group in state.cumul_groups:
+        for week_number in compute_cumul_risk_weeks(group, member_critical_date_sets, calendar_weeks):
+            for member_name in group["members"]:
+                cumul_risks_by_member.setdefault(member_name, []).append(
+                    {"group": group["name"], "week_number": week_number}
+                )
+        sole_weeks = compute_sole_coverage_weeks(group, member_critical_date_sets, calendar_weeks)
+        for member_name, weeks in sole_weeks.items():
+            for week_number in weeks:
+                sole_coverage_by_member.setdefault(member_name, []).append(
+                    {"group": group["name"], "week_number": week_number}
+                )
 
     result_members = []
     for m in members:
-        deadlock = DependencyGraph.compute_deadlock_weeks(
-            m.name, deps, member_absence_date_sets, calendar_weeks
-        )
         member_clusters = [c["name"] for c in state.clusters if m.name in c.get("members", [])]
         result_members.append({
             "name": m.name,
             "is_migration_member": m.is_migration_member,
-            "is_bottleneck": bottleneck_weights.get(m.name, 0) > 0,
             "merged_blocks": [
                 {"start": b.start_date.isoformat(), "end": b.end_date.isoformat()}
                 for b in m.merged_blocks
             ],
-            "deadlock_weeks": deadlock,
             "clusters": member_clusters,
+            "cumul_risks": cumul_risks_by_member.get(m.name, []),
+            "sole_coverage": sole_coverage_by_member.get(m.name, []),
         })
 
     result_members = _sort_members(result_members, state.clusters)
@@ -131,9 +134,9 @@ def _assemble_dashboard(app) -> dict:
     return {
         "calendar_weeks": calendar_weeks,
         "members": result_members,
-        "dependencies": deps,
         "skill_clusters": state.clusters,
         "phases": state.phases,
+        "cumul_groups": state.cumul_groups,
         "skipped_rows": [
             {"row": s.row, "reason": s.reason}
             for s in app.config["SKIPPED_ROWS"]
@@ -190,17 +193,6 @@ def create_app(excel_source: str, state_path: str = "state/state.json") -> Flask
         state = app.config["STATE"]
         removed = []
 
-        new_deps = []
-        for dep in state.dependencies:
-            stale = dep["from_member"] not in new_names or any(
-                m not in new_names for m in dep.get("to_members", [])
-            )
-            if stale:
-                removed.append({"type": "dependency", "entry": dep})
-            else:
-                new_deps.append(dep)
-        state.dependencies = new_deps
-
         new_clusters = []
         for cluster in state.clusters:
             valid_members = [m for m in cluster.get("members", []) if m in new_names]
@@ -213,6 +205,21 @@ def create_app(excel_source: str, state_path: str = "state/state.json") -> Flask
             new_clusters.append({"name": cluster["name"], "members": valid_members})
         state.clusters = new_clusters
 
+        new_cumul_groups = []
+        for group in state.cumul_groups:
+            valid_members = [m for m in group["members"] if m in new_names]
+            removed_members = [m for m in group["members"] if m not in new_names]
+            if len(valid_members) < 2:
+                removed.append({"type": "cumul_group", "entry": group})
+                continue
+            for rm in removed_members:
+                removed.append({
+                    "type": "cumul_group_member",
+                    "entry": {"group": group["name"], "member": rm},
+                })
+            new_cumul_groups.append({**group, "members": valid_members})
+        state.cumul_groups = new_cumul_groups
+
         app.config["MEMBERS"] = members
         app.config["SKIPPED_ROWS"] = skipped
         app.config["LAST_LOADED"] = last_loaded
@@ -221,113 +228,6 @@ def create_app(excel_source: str, state_path: str = "state/state.json") -> Flask
         result = _assemble_dashboard(app)
         result["removed_stale_references"] = removed
         return jsonify(result)
-
-    # ------------------------------------------------------------------
-    # GET /api/dependencies
-    # ------------------------------------------------------------------
-
-    @app.route("/api/dependencies", methods=["GET"])
-    def get_dependencies():
-        return jsonify({"dependencies": app.config["STATE"].dependencies})
-
-    # ------------------------------------------------------------------
-    # POST /api/dependencies
-    # ------------------------------------------------------------------
-
-    @app.route("/api/dependencies", methods=["POST"])
-    def post_dependency():
-        body = request.get_json(silent=True) or {}
-        source      = body.get("from_member", "")
-        to_members  = body.get("to_members", [])
-        active_from = body.get("active_from") or None
-        active_to   = body.get("active_to") or None
-        valid_names = {m.name for m in app.config["MEMBERS"]}
-        state = app.config["STATE"]
-        graph = DependencyGraph(state.dependencies)
-        try:
-            graph.add_dependency(source, to_members, valid_names,
-                                 active_from=active_from, active_to=active_to)
-        except ValueError as e:
-            msg = str(e)
-            if "already exists" in msg:
-                return jsonify({"error": msg}), 409
-            return jsonify({"error": msg}), 400
-        state.dependencies = graph.edges()
-        save_state(state, app.config["STATE_PATH"])
-        return jsonify({"dependencies": state.dependencies}), 201
-
-    # ------------------------------------------------------------------
-    # PUT /api/dependencies
-    # ------------------------------------------------------------------
-
-    @app.route("/api/dependencies", methods=["PUT"])
-    def put_dependency():
-        body = request.get_json(silent=True) or {}
-        old_from        = body.get("old_from", "")
-        old_to_members  = body.get("old_to_members", [])
-        old_active_from = body.get("old_active_from") or None
-        old_active_to   = body.get("old_active_to") or None
-        new_from        = body.get("new_from", "")
-        new_to_members  = body.get("new_to_members", [])
-        new_active_from = body.get("new_active_from") or None
-        new_active_to   = body.get("new_active_to") or None
-        valid_names = {m.name for m in app.config["MEMBERS"]}
-        state = app.config["STATE"]
-
-        if new_from not in valid_names:
-            return jsonify({"error": "Invalid member name"}), 400
-        for m in new_to_members:
-            if m not in valid_names:
-                return jsonify({"error": f"Member '{m}' not in loaded dataset."}), 400
-
-        old_pool_key = frozenset(old_to_members)
-        old_entry = next(
-            (d for d in state.dependencies
-             if d["from_member"] == old_from
-             and frozenset(d["to_members"]) == old_pool_key
-             and d.get("active_from") == old_active_from
-             and d.get("active_to") == old_active_to),
-            None,
-        )
-        if old_entry is None:
-            return jsonify({"error": "Dependency not found"}), 404
-
-        remaining = [d for d in state.dependencies if d is not old_entry]
-        graph = DependencyGraph(remaining)
-        try:
-            graph.add_dependency(new_from, new_to_members, valid_names,
-                                 active_from=new_active_from, active_to=new_active_to)
-        except ValueError as e:
-            msg = str(e)
-            if "already exists" in msg:
-                return jsonify({"error": msg}), 409
-            return jsonify({"error": msg}), 400
-
-        state.dependencies = graph.edges()
-        save_state(state, app.config["STATE_PATH"])
-        return jsonify({"dependencies": state.dependencies})
-
-    # ------------------------------------------------------------------
-    # DELETE /api/dependencies
-    # ------------------------------------------------------------------
-
-    @app.route("/api/dependencies", methods=["DELETE"])
-    def delete_dependency():
-        body = request.get_json(silent=True) or {}
-        source      = body.get("from_member", "")
-        to_members  = body.get("to_members", [])
-        active_from = body.get("active_from") or None
-        active_to   = body.get("active_to") or None
-        state = app.config["STATE"]
-        graph = DependencyGraph(state.dependencies)
-        try:
-            graph.remove_dependency(source, to_members,
-                                    active_from=active_from, active_to=active_to)
-        except KeyError as e:
-            return jsonify({"error": str(e)}), 404
-        state.dependencies = graph.edges()
-        save_state(state, app.config["STATE_PATH"])
-        return jsonify({"dependencies": state.dependencies})
 
     # ------------------------------------------------------------------
     # GET /api/clusters
@@ -461,6 +361,84 @@ def create_app(excel_source: str, state_path: str = "state/state.json") -> Flask
             return jsonify({"error": f"Phase '{phase_name}' not found."}), 404
         save_state(state, app.config["STATE_PATH"])
         return jsonify({"phases": state.phases})
+
+    # ------------------------------------------------------------------
+    # GET /api/cumul-groups
+    # ------------------------------------------------------------------
+
+    @app.route("/api/cumul-groups", methods=["GET"])
+    def get_cumul_groups():
+        return jsonify({"cumul_groups": app.config["STATE"].cumul_groups})
+
+    # ------------------------------------------------------------------
+    # POST /api/cumul-groups
+    # ------------------------------------------------------------------
+
+    @app.route("/api/cumul-groups", methods=["POST"])
+    def post_cumul_group():
+        body = request.get_json(silent=True) or {}
+        name = body.get("name", "").strip()
+        members = body.get("members", [])
+        active_from = body.get("active_from")
+        active_to = body.get("active_to")
+        valid_names = {m.name for m in app.config["MEMBERS"]}
+        state = app.config["STATE"]
+        try:
+            state.cumul_groups = add_cumul_group(
+                name, members, valid_names, state.cumul_groups,
+                active_from=active_from, active_to=active_to,
+            )
+        except ValueError as e:
+            msg = str(e)
+            status = 409 if "already exists" in msg else 400
+            return jsonify({"error": msg}), status
+        save_state(state, app.config["STATE_PATH"])
+        return jsonify({"cumul_groups": state.cumul_groups}), 201
+
+    # ------------------------------------------------------------------
+    # PUT /api/cumul-groups/<name>
+    # ------------------------------------------------------------------
+
+    @app.route("/api/cumul-groups/<path:name>", methods=["PUT"])
+    def put_cumul_group(name):
+        body = request.get_json(silent=True) or {}
+        new_name = body.get("name")
+        new_members = body.get("members")
+        valid_names = {m.name for m in app.config["MEMBERS"]}
+        state = app.config["STATE"]
+        kwargs = {}
+        if "active_from" in body:
+            kwargs["active_from"] = body.get("active_from")
+        if "active_to" in body:
+            kwargs["active_to"] = body.get("active_to")
+        try:
+            state.cumul_groups = update_cumul_group(
+                name, state.cumul_groups,
+                new_name=new_name, new_members=new_members, valid_members=valid_names,
+                **kwargs,
+            )
+        except KeyError:
+            return jsonify({"error": f"Cumul group '{name}' not found."}), 404
+        except ValueError as e:
+            msg = str(e)
+            status = 409 if "already exists" in msg else 400
+            return jsonify({"error": msg}), status
+        save_state(state, app.config["STATE_PATH"])
+        return jsonify({"cumul_groups": state.cumul_groups})
+
+    # ------------------------------------------------------------------
+    # DELETE /api/cumul-groups/<name>
+    # ------------------------------------------------------------------
+
+    @app.route("/api/cumul-groups/<path:name>", methods=["DELETE"])
+    def delete_cumul_group(name):
+        state = app.config["STATE"]
+        try:
+            state.cumul_groups = remove_cumul_group(name, state.cumul_groups)
+        except KeyError:
+            return jsonify({"error": f"Cumul group '{name}' not found."}), 404
+        save_state(state, app.config["STATE_PATH"])
+        return jsonify({"cumul_groups": state.cumul_groups})
 
     return app
 

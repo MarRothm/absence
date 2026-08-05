@@ -2,23 +2,23 @@
    Custom properties
    ------------------------------------------------------------------------- */
 :root {
-  --color-absent:            #4a90d9;
-  --color-at-risk:           #e8a838;
-  --color-bottleneck-absent: #c0392b;
-  --color-bottleneck-row:    #fdecea;
-  --color-cluster-sep:       #7f8c8d;
-  --color-phase:             #8e44ad;
-  --color-header-bg:         #2c3e50;
-  --color-header-text:       #ecf0f1;
-  --color-cell-border:       #bdc3c9;
-  --color-bg:                #f5f6fa;
-  --day-cell-width:          20px;   /* one working-day sub-column */
-  --cw-group-width:          100px;  /* 5 × 20px = one calendar week */
-  --row-height:              32px;
-  --name-col-width:          180px;
-  --color-today-indicator:   #e53e3e;
-  --color-deadlock:          #8b0000;
-  --color-phase-deadlock:    rgba(192, 57, 43, 0.55);
+  --color-absent:              #4a90d9;
+  --color-at-risk:             #e8a838;
+  --color-sole-coverage:       #c0392b;
+  --color-sole-coverage-row:   #fdecea;
+  --color-cluster-sep:         #7f8c8d;
+  --color-phase:               #8e44ad;
+  --color-header-bg:           #2c3e50;
+  --color-header-text:         #ecf0f1;
+  --color-cell-border:         #bdc3c9;
+  --color-bg:                  #f5f6fa;
+  --day-cell-width:            20px;   /* one working-day sub-column */
+  --cw-group-width:            100px;  /* 5 × 20px = one calendar week */
+  --row-height:                32px;
+  --name-col-width:            180px;
+  --color-today-indicator:     #e53e3e;
+  --color-cumul-risk:          #8b0000;
+  --color-phase-cumul-risk:    rgba(192, 57, 43, 0.55);
 }
 
 /* -------------------------------------------------------------------------
@@ -215,21 +215,13 @@ body {
 /* Single-day span: fully rounded pill */
 .tg-day-cell.ab-single { border-radius: 4px; }
 
-/* Bottleneck absent (same border-suppression pattern, different colour) */
-.tg-day-cell.bottleneck-absent { background: var(--color-bottleneck-absent); }
-
-.tg-day-cell.ba-start  { border-radius: 4px 0 0 4px; border-right: none; }
-.tg-day-cell.ba-mid    { border-radius: 0; border-left: none; border-right: none; }
-.tg-day-cell.ba-end    { border-radius: 0 4px 4px 0; border-left: none; }
-.tg-day-cell.ba-single { border-radius: 4px; }
-
 /* At-risk: full week band (all 5 day cells in the week get this class) */
 .tg-day-cell.at-risk { background: var(--color-at-risk); opacity: 0.55; }
 
-/* Bottleneck row header */
-.tg-row.is-bottleneck .tg-name {
-  background: var(--color-bottleneck-row);
-  border-left: 3px solid var(--color-bottleneck-absent);
+/* Sole coverage row header */
+.tg-row.is-sole-coverage .tg-name {
+  background: var(--color-sole-coverage-row);
+  border-left: 3px solid var(--color-sole-coverage);
 }
 
 /* Cluster separator */
@@ -247,10 +239,10 @@ body {
   letter-spacing: 0.5px;
 }
 
-/* Bottleneck badge */
-.bottleneck-badge {
+/* Sole coverage badge */
+.sole-coverage-badge {
   font-size: 10px;
-  background: var(--color-bottleneck-absent);
+  background: var(--color-sole-coverage);
   color: #fff;
   border-radius: 3px;
   padding: 1px 4px;
@@ -277,6 +269,14 @@ body {
   font-weight: 700;
   border-bottom: 1px solid #d5d8dc;
   background: #eaecee;
+}
+
+.cumul-definition {
+  padding: 8px 14px;
+  font-size: 11px;
+  color: #556270;
+  border-bottom: 1px solid #d5d8dc;
+  line-height: 1.4;
 }
 
 .panel-form {
@@ -473,17 +473,17 @@ body {
 }
 
 /* -------------------------------------------------------------------------
-   Deadlock visualization  (FR-005 / Phase 15)
+   Cumul risk visualization  (FR-007..FR-010, FR-016)
    ------------------------------------------------------------------------- */
-.tg-day-cell.deadlock {
-  background: var(--color-deadlock);
+.tg-day-cell.cumul-risk {
+  background: var(--color-cumul-risk);
   color: #fff;
   font-weight: 700;
   position: relative;
   overflow: visible;
 }
 
-.deadlock-label {
+.cumul-risk-label {
   position: absolute;
   left: 0;
   top: 50%;
@@ -498,7 +498,7 @@ body {
   z-index: 1;
 }
 
-.tg-row.tg-phase-row.phase-has-deadlock .tg-day-cell.phase-active {
-  background: var(--color-phase-deadlock);
+.tg-row.tg-phase-row.phase-has-cumul-risk .tg-day-cell.phase-active {
+  background: var(--color-phase-cumul-risk);
   opacity: 1;
 }

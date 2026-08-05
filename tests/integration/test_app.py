@@ -18,6 +18,95 @@ def get_member(data, name):
 
 
 # ---------------------------------------------------------------------------
+# Fixtures for cumul risk / sole coverage tests (T020 / US2)
+# Dates are computed relative to today so the fixture stays valid regardless
+# of when the suite runs (calendar_weeks only spans today..CW53 of this year).
+# 3 consecutive weeks starting from the week after today: Alice absent
+# week1 Mon - week2 Mon (8 cal days, critical); Bob absent week2 Mon -
+# week3 Mon (8 cal days, critical). They share week2's Monday. Carol never
+# absent.
+# ---------------------------------------------------------------------------
+
+def _monday_of_iso_week(year, week):
+    from datetime import date
+    return date.fromisocalendar(year, week, 1)
+
+
+@pytest.fixture
+def critical_weeks():
+    from datetime import date, timedelta
+    today_iso = date.today().isocalendar()
+    start_week = today_iso.week + 1
+    year = today_iso.year
+    mondays = [
+        _monday_of_iso_week(year, start_week),
+        _monday_of_iso_week(year, start_week + 1),
+        _monday_of_iso_week(year, start_week + 2),
+    ]
+    week_numbers = [start_week, start_week + 1, start_week + 2]
+    weekday_columns = [
+        [mon + timedelta(days=offset) for offset in range(5)] for mon in mondays
+    ]
+    return {"year": year, "week_numbers": week_numbers, "days": weekday_columns}
+
+
+@pytest.fixture
+def critical_workbook(critical_weeks):
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+
+    all_days = [d for week in critical_weeks["days"] for d in week]
+    cw_labels = [f"KW{wn}" for wn in critical_weeks["week_numbers"] for _ in range(5)]
+    for col, label in zip(range(6, 21), cw_labels):
+        ws.cell(row=1, column=col, value=label)
+
+    weekdays = ["Mo", "Di", "Mi", "Do", "Fr"] * 3
+    for col, day in zip(range(6, 21), weekdays):
+        ws.cell(row=2, column=col, value=day)
+
+    # Row 3: Alice – absent week1 Mon-Fri + week2 Mon (cols 6-11)
+    ws.cell(row=3, column=3, value="x")
+    ws.cell(row=3, column=4, value="Alice")
+    for col in range(6, 12):
+        ws.cell(row=3, column=col, value="x")
+
+    # Row 4: Bob – absent week2 Mon-Fri + week3 Mon (cols 11-16)
+    ws.cell(row=4, column=3, value="x")
+    ws.cell(row=4, column=4, value="Bob")
+    for col in range(11, 17):
+        ws.cell(row=4, column=col, value="x")
+
+    # Row 5: Carol – marked, no absences
+    ws.cell(row=5, column=3, value="x")
+    ws.cell(row=5, column=4, value="Carol")
+
+    return wb
+
+
+@pytest.fixture
+def critical_xlsx(critical_workbook, tmp_path):
+    path = tmp_path / "critical_absences.xlsx"
+    critical_workbook.save(str(path))
+    return str(path)
+
+
+@pytest.fixture
+def critical_app(critical_xlsx, tmp_path):
+    state_path = str(tmp_path / "critical_state.json")
+    from absence_dashboard.app import create_app
+    flask_app = create_app(critical_xlsx, state_path=state_path)
+    flask_app.config["TESTING"] = True
+    return flask_app
+
+
+@pytest.fixture
+def critical_client(critical_app):
+    return critical_app.test_client()
+
+
+# ---------------------------------------------------------------------------
 # GET /api/dashboard  (T014 / US1)
 # ---------------------------------------------------------------------------
 
@@ -125,22 +214,11 @@ class TestGetDashboard:
         assert "skipped_rows" in data
         assert len(data["skipped_rows"]) == 1
 
-    def test_initial_no_dependencies(self, client):
-        data = client.get("/api/dashboard").get_json()
-        assert data["dependencies"] == []
-
-    def test_initial_no_member_is_bottleneck(self, client):
-        data = client.get("/api/dashboard").get_json()
-        for m in data["members"]:
-            assert m["is_bottleneck"] is False
-
     def test_member_fields_present(self, client):
         data = client.get("/api/dashboard").get_json()
         for m in data["members"]:
             assert "name" in m
-            assert "is_bottleneck" in m
             assert "merged_blocks" in m
-            assert "deadlock_weeks" in m
             assert "clusters" in m
 
     def test_is_migration_member_field_present(self, client):
@@ -167,107 +245,6 @@ class TestGetDashboard:
         names = {m["name"] for m in data["members"]}
         assert "Dave" in names
         assert "Eve" in names
-
-
-# ---------------------------------------------------------------------------
-# POST /api/dependencies  (T022 / US2)
-# ---------------------------------------------------------------------------
-
-class TestPostDependencies:
-    def test_add_single_pool_returns_201(self, client):
-        rv = client.post("/api/dependencies",
-                         json={"from_member": "Alice", "to_members": ["Bob"]})
-        assert rv.status_code == 201
-
-    def test_add_multi_pool_returns_201(self, client):
-        rv = client.post("/api/dependencies",
-                         json={"from_member": "Alice", "to_members": ["Bob", "Carol"]})
-        assert rv.status_code == 201
-
-    def test_add_dependency_appears_in_response(self, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
-        data = client.get("/api/dashboard").get_json()
-        deps = data["dependencies"]
-        assert any(
-            d["from_member"] == "Alice" and d["to_members"] == ["Bob"]
-            for d in deps
-        )
-
-    def test_unknown_source_returns_400(self, client):
-        rv = client.post("/api/dependencies",
-                         json={"from_member": "Unknown", "to_members": ["Bob"]})
-        assert rv.status_code == 400
-
-    def test_unknown_pool_member_returns_400(self, client):
-        rv = client.post("/api/dependencies",
-                         json={"from_member": "Alice", "to_members": ["Unknown"]})
-        assert rv.status_code == 400
-
-    def test_empty_pool_returns_400(self, client):
-        rv = client.post("/api/dependencies",
-                         json={"from_member": "Alice", "to_members": []})
-        assert rv.status_code == 400
-
-    def test_duplicate_returns_409(self, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
-        rv = client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
-        assert rv.status_code == 409
-
-    def test_state_persisted_after_add(self, app, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
-        state = app.config["STATE"]
-        assert any(
-            d["from_member"] == "Alice" and d["to_members"] == ["Bob"]
-            for d in state.dependencies
-        )
-
-
-class TestDeleteDependencies:
-    def test_delete_existing_returns_200(self, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
-        rv = client.delete("/api/dependencies",
-                           json={"from_member": "Alice", "to_members": ["Bob"]})
-        assert rv.status_code == 200
-
-    def test_delete_removes_from_state(self, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
-        client.delete("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
-        data = client.get("/api/dashboard").get_json()
-        assert not any(
-            d["from_member"] == "Alice" and "Bob" in d["to_members"]
-            for d in data["dependencies"]
-        )
-
-    def test_delete_nonexistent_returns_404(self, client):
-        rv = client.delete("/api/dependencies",
-                           json={"from_member": "Alice", "to_members": ["Bob"]})
-        assert rv.status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# Bottleneck via dashboard  (T026 / US3)
-# ---------------------------------------------------------------------------
-
-class TestBottleneck:
-    def test_sole_satisfier_is_bottleneck(self, client):
-        # Alice depends on [Bob] only; Bob is present in most CWs → sole satisfier → weight > 0
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
-        data = client.get("/api/dashboard").get_json()
-        bob = get_member(data, "Bob")
-        assert bob["is_bottleneck"] is True
-
-    def test_shared_pool_not_bottleneck_for_both_present(self, client):
-        # Alice→[Bob, Carol]; Carol always present, Bob too (most CWs) → neither sole satisfier
-        client.post("/api/dependencies",
-                    json={"from_member": "Alice", "to_members": ["Bob", "Carol"]})
-        data = client.get("/api/dashboard").get_json()
-        bob = get_member(data, "Bob")
-        assert bob["is_bottleneck"] is False
-
-    def test_no_deps_no_bottleneck(self, client):
-        data = client.get("/api/dashboard").get_json()
-        for m in data["members"]:
-            assert m["is_bottleneck"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -345,15 +322,10 @@ class TestMemberInMultipleClusters:
 
 
 # ---------------------------------------------------------------------------
-# GET /api/dependencies, GET /api/clusters  (T037, T038 / Polish)
+# GET /api/clusters  (T038 / Polish)
 # ---------------------------------------------------------------------------
 
 class TestGetEndpoints:
-    def test_get_dependencies_returns_200(self, client):
-        rv = client.get("/api/dependencies")
-        assert rv.status_code == 200
-        assert "dependencies" in rv.get_json()
-
     def test_get_clusters_returns_200(self, client):
         rv = client.get("/api/clusters")
         assert rv.status_code == 200
@@ -361,22 +333,275 @@ class TestGetEndpoints:
 
 
 # ---------------------------------------------------------------------------
+# Cumul group endpoints  (T012 / US1)
+# ---------------------------------------------------------------------------
+
+class TestCumulGroupsCRUD:
+    def test_get_cumul_groups_returns_200(self, client):
+        rv = client.get("/api/cumul-groups")
+        assert rv.status_code == 200
+        assert rv.get_json()["cumul_groups"] == []
+
+    def test_create_cumul_group_returns_201(self, client):
+        rv = client.post(
+            "/api/cumul-groups",
+            json={"name": "Backend Coverage", "members": ["Alice", "Bob"]},
+        )
+        assert rv.status_code == 201
+        assert rv.get_json()["cumul_groups"][0]["name"] == "Backend Coverage"
+
+    def test_created_group_appears_in_get(self, client):
+        client.post(
+            "/api/cumul-groups",
+            json={"name": "Backend Coverage", "members": ["Alice", "Bob"]},
+        )
+        data = client.get("/api/cumul-groups").get_json()
+        assert data["cumul_groups"][0]["members"] == ["Alice", "Bob"]
+
+    def test_create_with_fewer_than_two_members_returns_400(self, client):
+        rv = client.post(
+            "/api/cumul-groups", json={"name": "Solo", "members": ["Alice"]},
+        )
+        assert rv.status_code == 400
+
+    def test_create_with_empty_name_returns_400(self, client):
+        rv = client.post(
+            "/api/cumul-groups", json={"name": "", "members": ["Alice", "Bob"]},
+        )
+        assert rv.status_code == 400
+
+    def test_create_with_unknown_member_returns_400(self, client):
+        rv = client.post(
+            "/api/cumul-groups",
+            json={"name": "Backend Coverage", "members": ["Alice", "Unknown"]},
+        )
+        assert rv.status_code == 400
+
+    def test_create_duplicate_name_returns_409(self, client):
+        client.post(
+            "/api/cumul-groups",
+            json={"name": "Backend Coverage", "members": ["Alice", "Bob"]},
+        )
+        rv = client.post(
+            "/api/cumul-groups",
+            json={"name": "Backend Coverage", "members": ["Carol", "Dave"]},
+        )
+        assert rv.status_code == 409
+
+    def test_create_duplicate_member_set_returns_409(self, client):
+        client.post(
+            "/api/cumul-groups",
+            json={"name": "Backend Coverage", "members": ["Alice", "Bob"]},
+        )
+        rv = client.post(
+            "/api/cumul-groups",
+            json={"name": "Backend Coverage v2", "members": ["Bob", "Alice"]},
+        )
+        assert rv.status_code == 409
+
+    def test_create_active_from_without_active_to_returns_400(self, client):
+        rv = client.post(
+            "/api/cumul-groups",
+            json={
+                "name": "Timeboxed", "members": ["Alice", "Bob"],
+                "active_from": "2026-06-01",
+            },
+        )
+        assert rv.status_code == 400
+
+    def test_update_cumul_group_rename(self, client):
+        client.post(
+            "/api/cumul-groups",
+            json={"name": "Backend Coverage", "members": ["Alice", "Bob"]},
+        )
+        rv = client.put(
+            "/api/cumul-groups/Backend Coverage",
+            json={"name": "Backend Coverage v2"},
+        )
+        assert rv.status_code == 200
+        assert rv.get_json()["cumul_groups"][0]["name"] == "Backend Coverage v2"
+
+    def test_update_cumul_group_members(self, client):
+        client.post(
+            "/api/cumul-groups",
+            json={"name": "Backend Coverage", "members": ["Alice", "Bob"]},
+        )
+        rv = client.put(
+            "/api/cumul-groups/Backend Coverage",
+            json={"members": ["Carol", "Dave"]},
+        )
+        assert rv.status_code == 200
+        assert rv.get_json()["cumul_groups"][0]["members"] == ["Carol", "Dave"]
+
+    def test_update_unknown_group_returns_404(self, client):
+        rv = client.put(
+            "/api/cumul-groups/Nonexistent", json={"name": "Renamed"},
+        )
+        assert rv.status_code == 404
+
+    def test_update_with_unknown_member_returns_400(self, client):
+        client.post(
+            "/api/cumul-groups",
+            json={"name": "Backend Coverage", "members": ["Alice", "Bob"]},
+        )
+        rv = client.put(
+            "/api/cumul-groups/Backend Coverage",
+            json={"members": ["Alice", "Unknown"]},
+        )
+        assert rv.status_code == 400
+
+    def test_update_rename_to_existing_name_returns_409(self, client):
+        client.post(
+            "/api/cumul-groups",
+            json={"name": "Backend Coverage", "members": ["Alice", "Bob"]},
+        )
+        client.post(
+            "/api/cumul-groups",
+            json={"name": "Frontend Coverage", "members": ["Carol", "Dave"]},
+        )
+        rv = client.put(
+            "/api/cumul-groups/Backend Coverage",
+            json={"name": "Frontend Coverage"},
+        )
+        assert rv.status_code == 409
+
+    def test_delete_cumul_group_returns_200(self, client):
+        client.post(
+            "/api/cumul-groups",
+            json={"name": "Backend Coverage", "members": ["Alice", "Bob"]},
+        )
+        rv = client.delete("/api/cumul-groups/Backend Coverage")
+        assert rv.status_code == 200
+        assert rv.get_json()["cumul_groups"] == []
+
+    def test_delete_unknown_group_returns_404(self, client):
+        rv = client.delete("/api/cumul-groups/Nonexistent")
+        assert rv.status_code == 404
+
+    def test_cumul_groups_appear_in_dashboard(self, client):
+        client.post(
+            "/api/cumul-groups",
+            json={"name": "Backend Coverage", "members": ["Alice", "Bob"]},
+        )
+        data = client.get("/api/dashboard").get_json()
+        assert data["cumul_groups"][0]["name"] == "Backend Coverage"
+
+
+# ---------------------------------------------------------------------------
+# Cumul risk weeks visibility  (T020 / US2)
+# ---------------------------------------------------------------------------
+
+class TestCumulRiskWeeks:
+    def test_dashboard_member_has_cumul_risks_field(self, critical_client):
+        data = critical_client.get("/api/dashboard").get_json()
+        for m in data["members"]:
+            assert "cumul_risks" in m
+
+    def test_shared_critical_week_flagged(self, critical_client, critical_weeks):
+        critical_client.post(
+            "/api/cumul-groups",
+            json={"name": "Risk Group", "members": ["Alice", "Bob"]},
+        )
+        data = critical_client.get("/api/dashboard").get_json()
+        alice = get_member(data, "Alice")
+        bob = get_member(data, "Bob")
+        week2 = critical_weeks["week_numbers"][1]
+        assert {"group": "Risk Group", "week_number": week2} in alice["cumul_risks"]
+        assert {"group": "Risk Group", "week_number": week2} in bob["cumul_risks"]
+
+    def test_non_overlapping_weeks_not_flagged(self, critical_client, critical_weeks):
+        critical_client.post(
+            "/api/cumul-groups",
+            json={"name": "Risk Group", "members": ["Alice", "Bob"]},
+        )
+        data = critical_client.get("/api/dashboard").get_json()
+        alice = get_member(data, "Alice")
+        weeks = {r["week_number"] for r in alice["cumul_risks"] if r["group"] == "Risk Group"}
+        week1, _, week3 = critical_weeks["week_numbers"]
+        assert week1 not in weeks
+        assert week3 not in weeks
+
+    def test_member_not_in_group_has_no_risk_for_that_group(self, critical_client):
+        critical_client.post(
+            "/api/cumul-groups",
+            json={"name": "Risk Group", "members": ["Alice", "Bob"]},
+        )
+        data = critical_client.get("/api/dashboard").get_json()
+        carol = get_member(data, "Carol")
+        assert carol["cumul_risks"] == []
+
+    def test_no_groups_means_no_risks(self, critical_client):
+        data = critical_client.get("/api/dashboard").get_json()
+        for m in data["members"]:
+            assert m["cumul_risks"] == []
+
+
+# ---------------------------------------------------------------------------
+# Sole coverage visibility  (T020 / US2)
+# ---------------------------------------------------------------------------
+
+class TestSoleCoverage:
+    def test_dashboard_member_has_sole_coverage_field(self, critical_client):
+        data = critical_client.get("/api/dashboard").get_json()
+        for m in data["members"]:
+            assert "sole_coverage" in m
+
+    def test_sole_present_member_flagged(self, critical_client, critical_weeks):
+        critical_client.post(
+            "/api/cumul-groups",
+            json={"name": "Sole Group", "members": ["Alice", "Bob", "Carol"]},
+        )
+        data = critical_client.get("/api/dashboard").get_json()
+        carol = get_member(data, "Carol")
+        week2 = critical_weeks["week_numbers"][1]
+        assert {"group": "Sole Group", "week_number": week2} in carol["sole_coverage"]
+
+    def test_weeks_where_carol_not_sole_are_not_flagged(self, critical_client, critical_weeks):
+        critical_client.post(
+            "/api/cumul-groups",
+            json={"name": "Sole Group", "members": ["Alice", "Bob", "Carol"]},
+        )
+        data = critical_client.get("/api/dashboard").get_json()
+        carol = get_member(data, "Carol")
+        weeks = {r["week_number"] for r in carol["sole_coverage"] if r["group"] == "Sole Group"}
+        week1, _, week3 = critical_weeks["week_numbers"]
+        assert week1 not in weeks
+        assert week3 not in weeks
+
+    def test_two_member_group_flags_both_directions(self, critical_client, critical_weeks):
+        critical_client.post(
+            "/api/cumul-groups",
+            json={"name": "Risk Group", "members": ["Alice", "Bob"]},
+        )
+        data = critical_client.get("/api/dashboard").get_json()
+        alice = get_member(data, "Alice")
+        bob = get_member(data, "Bob")
+        week1, _, week3 = critical_weeks["week_numbers"]
+        assert {"group": "Risk Group", "week_number": week1} in bob["sole_coverage"]
+        assert {"group": "Risk Group", "week_number": week3} in alice["sole_coverage"]
+
+
+# ---------------------------------------------------------------------------
 # POST /api/refresh  (T034 / US5)
 # ---------------------------------------------------------------------------
+
+def _write_workbook_with_members(path, member_names):
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=1, column=6, value="KW18")
+    ws.cell(row=2, column=6, value="Mo")
+    for i, name in enumerate(member_names):
+        row = 3 + i
+        ws.cell(row=row, column=3, value="x")
+        ws.cell(row=row, column=4, value=name)
+    wb.save(path)
+
 
 class TestRefresh:
     def test_refresh_returns_200(self, client):
         rv = client.post("/api/refresh")
         assert rv.status_code == 200
-
-    def test_refresh_preserves_dependencies(self, client):
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
-        client.post("/api/refresh")
-        data = client.get("/api/dashboard").get_json()
-        assert any(
-            d["from_member"] == "Alice" and d["to_members"] == ["Bob"]
-            for d in data["dependencies"]
-        )
 
     def test_refresh_preserves_clusters(self, client):
         client.post("/api/clusters", json={"name": "Backend", "members": ["Alice"]})
@@ -385,30 +610,39 @@ class TestRefresh:
         alice = get_member(data, "Alice")
         assert "Backend" in alice["clusters"]
 
-    def test_refresh_stale_dependency_removed(self, app, client, tmp_path):
-        # Add a dependency, then replace the Excel with a file that has no "Alice"
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
-        # Build a minimal workbook with only Bob and Carol
-        from openpyxl import Workbook
-        wb = Workbook()
-        ws = wb.active
-        ws.cell(row=1, column=6, value="KW18")
-        ws.cell(row=2, column=6, value="Mo")
-        ws.cell(row=3, column=3, value="x")
-        ws.cell(row=3, column=4, value="Bob")
-        ws.cell(row=4, column=3, value="x")
-        ws.cell(row=4, column=4, value="Carol")
-        new_path = str(tmp_path / "updated.xlsx")
-        wb.save(new_path)
-        app.config["EXCEL_SOURCE"] = new_path
+
+class TestRefreshCumulGroupCleanup:
+    def test_removed_member_dropped_and_reported(self, client, app):
+        client.post("/api/cumul-groups", json={"name": "G1", "members": ["Alice", "Bob", "Carol"]})
+        _write_workbook_with_members(app.config["EXCEL_SOURCE"], ["Alice", "Bob"])
         rv = client.post("/api/refresh")
-        assert rv.status_code == 200
-        result = rv.get_json()
-        assert len(result.get("removed_stale_references", [])) > 0
-        data = client.get("/api/dashboard").get_json()
-        assert not any(
-            d["from_member"] == "Alice" for d in data["dependencies"]
+        data = rv.get_json()
+        removed = data["removed_stale_references"]
+        assert {"type": "cumul_group_member", "entry": {"group": "G1", "member": "Carol"}} in removed
+        group = next(g for g in data["cumul_groups"] if g["name"] == "G1")
+        assert group["members"] == ["Alice", "Bob"]
+
+    def test_group_removed_when_below_two_valid_members(self, client, app):
+        client.post("/api/cumul-groups", json={"name": "G2", "members": ["Alice", "Bob"]})
+        _write_workbook_with_members(app.config["EXCEL_SOURCE"], ["Alice"])
+        rv = client.post("/api/refresh")
+        data = rv.get_json()
+        removed = data["removed_stale_references"]
+        assert any(
+            r["type"] == "cumul_group" and r["entry"]["name"] == "G2"
+            for r in removed
         )
+        assert not any(g["name"] == "G2" for g in data["cumul_groups"])
+
+    def test_unaffected_group_unchanged(self, client, app):
+        client.post("/api/cumul-groups", json={"name": "G3", "members": ["Alice", "Bob"]})
+        _write_workbook_with_members(app.config["EXCEL_SOURCE"], ["Alice", "Bob", "Carol"])
+        rv = client.post("/api/refresh")
+        data = rv.get_json()
+        group = next(g for g in data["cumul_groups"] if g["name"] == "G3")
+        assert group["members"] == ["Alice", "Bob"]
+        removed = data["removed_stale_references"]
+        assert not any(r["entry"].get("group") == "G3" for r in removed)
 
 
 # ---------------------------------------------------------------------------
@@ -518,71 +752,6 @@ class TestRefreshPreservesPhases:
         client.post("/api/refresh")
         data = client.get("/api/dashboard").get_json()
         assert any(p["name"] == "Go-Live" for p in data["phases"])
-
-
-# ---------------------------------------------------------------------------
-# PUT /api/dependencies  (T056 / Phase 11)
-# ---------------------------------------------------------------------------
-
-class TestPutDependencies:
-    def test_valid_replace_returns_200(self, client):
-        client.post("/api/dependencies",
-                    json={"from_member": "Alice", "to_members": ["Bob"]})
-        rv = client.put("/api/dependencies",
-                        json={"old_from": "Alice", "old_to_members": ["Bob"],
-                              "new_from": "Alice", "new_to_members": ["Carol"]})
-        assert rv.status_code == 200
-
-    def test_valid_replace_updates_list(self, client):
-        client.post("/api/dependencies",
-                    json={"from_member": "Alice", "to_members": ["Bob"]})
-        client.put("/api/dependencies",
-                   json={"old_from": "Alice", "old_to_members": ["Bob"],
-                         "new_from": "Alice", "new_to_members": ["Carol"]})
-        data = client.get("/api/dependencies").get_json()
-        deps = data["dependencies"]
-        assert any(d["from_member"] == "Alice" and d["to_members"] == ["Carol"] for d in deps)
-        assert not any(d["from_member"] == "Alice" and d["to_members"] == ["Bob"] for d in deps)
-
-    def test_old_pair_not_found_returns_404(self, client):
-        rv = client.put("/api/dependencies",
-                        json={"old_from": "Alice", "old_to_members": ["Bob"],
-                              "new_from": "Alice", "new_to_members": ["Carol"]})
-        assert rv.status_code == 404
-
-    def test_duplicate_new_pair_returns_409(self, client):
-        client.post("/api/dependencies",
-                    json={"from_member": "Alice", "to_members": ["Bob"]})
-        client.post("/api/dependencies",
-                    json={"from_member": "Carol", "to_members": ["Bob"]})
-        rv = client.put("/api/dependencies",
-                        json={"old_from": "Carol", "old_to_members": ["Bob"],
-                              "new_from": "Alice", "new_to_members": ["Bob"]})
-        assert rv.status_code == 409
-
-    def test_invalid_member_returns_400(self, client):
-        client.post("/api/dependencies",
-                    json={"from_member": "Alice", "to_members": ["Bob"]})
-        rv = client.put("/api/dependencies",
-                        json={"old_from": "Alice", "old_to_members": ["Bob"],
-                              "new_from": "Alice", "new_to_members": ["Unknown"]})
-        assert rv.status_code == 400
-
-    def test_state_persisted_after_replace(self, app, client):
-        client.post("/api/dependencies",
-                    json={"from_member": "Alice", "to_members": ["Bob"]})
-        client.put("/api/dependencies",
-                   json={"old_from": "Alice", "old_to_members": ["Bob"],
-                         "new_from": "Alice", "new_to_members": ["Carol"]})
-        state = app.config["STATE"]
-        assert any(
-            d["from_member"] == "Alice" and d["to_members"] == ["Carol"]
-            for d in state.dependencies
-        )
-        assert not any(
-            d["from_member"] == "Alice" and d["to_members"] == ["Bob"]
-            for d in state.dependencies
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -779,137 +948,6 @@ class TestLastLoaded:
         data2 = client.post("/api/refresh").get_json()
         ll2 = data2["last_loaded"]
         assert ll2 >= ll1
-
-
-# ---------------------------------------------------------------------------
-# Pool-based dependencies  (T086 / Phase 15)
-# ---------------------------------------------------------------------------
-
-class TestPoolDependenciesAPI:
-    def test_post_multi_pool_returns_201(self, client):
-        rv = client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_members": ["Bob", "Carol"],
-        })
-        assert rv.status_code == 201
-
-    def test_post_date_range_stored_on_pool_entry(self, client):
-        client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_members": ["Bob"],
-            "active_from": "2026-06-01", "active_to": "2026-06-30",
-        })
-        deps = client.get("/api/dependencies").get_json()["dependencies"]
-        match = next((d for d in deps if d["from_member"] == "Alice"), None)
-        assert match is not None
-        assert match["active_from"] == "2026-06-01"
-        assert match["active_to"] == "2026-06-30"
-
-    def test_post_only_active_from_returns_400(self, client):
-        rv = client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_members": ["Bob"],
-            "active_from": "2026-06-01",
-        })
-        assert rv.status_code == 400
-
-    def test_post_active_from_after_active_to_returns_400(self, client):
-        rv = client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_members": ["Bob"],
-            "active_from": "2026-07-01", "active_to": "2026-06-30",
-        })
-        assert rv.status_code == 400
-
-    def test_same_pool_different_date_ranges_both_accepted(self, client):
-        rv1 = client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_members": ["Bob"],
-            "active_from": "2026-06-01", "active_to": "2026-06-30",
-        })
-        rv2 = client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_members": ["Bob"],
-            "active_from": "2026-09-01", "active_to": "2026-09-30",
-        })
-        assert rv1.status_code == 201
-        assert rv2.status_code == 201
-        deps = client.get("/api/dependencies").get_json()["dependencies"]
-        alice_deps = [d for d in deps if d["from_member"] == "Alice"]
-        assert len(alice_deps) == 2
-
-    def test_identical_pool_tuple_returns_409(self, client):
-        client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_members": ["Bob"],
-            "active_from": "2026-06-01", "active_to": "2026-06-30",
-        })
-        rv = client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_members": ["Bob"],
-            "active_from": "2026-06-01", "active_to": "2026-06-30",
-        })
-        assert rv.status_code == 409
-
-    def test_delete_removes_correct_pool_tuple_only(self, client):
-        client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_members": ["Bob"],
-            "active_from": "2026-06-01", "active_to": "2026-06-30",
-        })
-        client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_members": ["Bob"],
-            "active_from": "2026-09-01", "active_to": "2026-09-30",
-        })
-        rv = client.delete("/api/dependencies", json={
-            "from_member": "Alice", "to_members": ["Bob"],
-            "active_from": "2026-06-01", "active_to": "2026-06-30",
-        })
-        assert rv.status_code == 200
-        deps = rv.get_json()["dependencies"]
-        alice_deps = [d for d in deps if d["from_member"] == "Alice"]
-        assert len(alice_deps) == 1
-        assert alice_deps[0]["active_from"] == "2026-09-01"
-
-    def test_dashboard_has_deadlock_weeks_not_at_risk(self, client):
-        data = client.get("/api/dashboard").get_json()
-        for m in data["members"]:
-            assert "deadlock_weeks" in m
-            assert "at_risk_weeks" not in m
-
-    def test_dashboard_deadlock_weeks_field_present(self, client):
-        # deadlock_weeks must be present and a list for every member
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
-        data = client.get("/api/dashboard").get_json()
-        for m in data["members"]:
-            assert isinstance(m["deadlock_weeks"], list)
-
-    def test_dashboard_no_deadlock_when_partial_pool_absent(self, client):
-        # Alice→[Bob, Carol]; Carol has no absences → never deadlock
-        client.post("/api/dependencies",
-                    json={"from_member": "Alice", "to_members": ["Bob", "Carol"]})
-        data = client.get("/api/dashboard").get_json()
-        alice = next(m for m in data["members"] if m["name"] == "Alice")
-        assert alice["deadlock_weeks"] == []
-
-    def test_is_bottleneck_sole_satisfier(self, client):
-        # Alice→[Bob]: Bob present in most CWs → weight > 0 → is_bottleneck=true
-        client.post("/api/dependencies", json={"from_member": "Alice", "to_members": ["Bob"]})
-        data = client.get("/api/dashboard").get_json()
-        bob = next(m for m in data["members"] if m["name"] == "Bob")
-        assert bob["is_bottleneck"] is True
-
-    def test_put_pool_dependency_replaces_correctly(self, client):
-        client.post("/api/dependencies", json={
-            "from_member": "Alice", "to_members": ["Bob"],
-            "active_from": "2026-06-01", "active_to": "2026-06-30",
-        })
-        rv = client.put("/api/dependencies", json={
-            "old_from": "Alice", "old_to_members": ["Bob"],
-            "old_active_from": "2026-06-01", "old_active_to": "2026-06-30",
-            "new_from": "Alice", "new_to_members": ["Carol"],
-            "new_active_from": "2026-07-01", "new_active_to": "2026-07-31",
-        })
-        assert rv.status_code == 200
-        deps = rv.get_json()["dependencies"]
-        assert not any(
-            d["from_member"] == "Alice" and "Bob" in d["to_members"]
-            for d in deps
-        )
-        new_dep = next(d for d in deps if d["from_member"] == "Alice")
-        assert new_dep["to_members"] == ["Carol"]
-        assert new_dep["active_from"] == "2026-07-01"
 
 
 # ---------------------------------------------------------------------------
