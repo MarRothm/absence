@@ -123,6 +123,7 @@ def _group_active_in_cw(group: dict, cw: dict) -> bool:
 
 
 def compute_cumul_risk_weeks(group: dict, member_critical_date_sets: dict, calendar_weeks: list) -> list:
+    """Sorted week keys ("YYYY-Www") in which every member has a critical absence day."""
     risk_weeks = set()
     for cw in calendar_weeks:
         if not _group_active_in_cw(group, cw):
@@ -132,11 +133,12 @@ def compute_cumul_risk_weeks(group: dict, member_critical_date_sets: dict, calen
             member_critical_date_sets.get(m, set()) & cw_days
             for m in group["members"]
         ):
-            risk_weeks.add(cw["week_number"])
+            risk_weeks.add(cw["key"])
     return sorted(risk_weeks)
 
 
 def compute_sole_coverage_weeks(group: dict, member_critical_date_sets: dict, calendar_weeks: list) -> dict:
+    """Member name → week keys in which they are the only member without a critical absence."""
     sole_weeks: dict = {}
     for cw in calendar_weeks:
         if not _group_active_in_cw(group, cw):
@@ -148,5 +150,5 @@ def compute_sole_coverage_weeks(group: dict, member_critical_date_sets: dict, ca
         ]
         if len(not_critical) == 1:
             sole = not_critical[0]
-            sole_weeks.setdefault(sole, []).append(cw["week_number"])
+            sole_weeks.setdefault(sole, []).append(cw["key"])
     return sole_weeks

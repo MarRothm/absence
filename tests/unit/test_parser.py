@@ -130,6 +130,51 @@ class TestBuildDateMap:
         assert dm[9] == date(2027, 1, 5)
 
 
+class TestBuildDateMapYearInference:
+    """Real files carry only ISO week numbers, no year — the starting year must be
+    inferred from today's date rather than assumed to be the current year."""
+
+    def _make_ws(self, columns):
+        wb = Workbook()
+        ws = wb.active
+        for offset, (kw, wd) in enumerate(columns):
+            ws.cell(row=1, column=6 + offset, value=kw)
+            ws.cell(row=2, column=6 + offset, value=wd)
+        return ws
+
+    def test_file_containing_today_dated_in_current_year(self):
+        ws = self._make_ws([("KW18", "Mo"), ("KW53", "Fr")])
+        dm = build_date_map(ws, today=date(2026, 10, 13))
+        assert dm[6] == date(2026, 4, 27)
+
+    def test_week_53_file_still_loads_after_new_year(self):
+        # 2027 has no ISO week 53 — assuming the current year used to raise ValueError
+        ws = self._make_ws([("KW18", "Mo"), ("KW53", "Fr")])
+        dm = build_date_map(ws, today=date(2027, 1, 15))
+        assert dm[6] == date(2026, 4, 27)
+        assert dm[7] == date(2027, 1, 1)
+
+    def test_rolling_file_spanning_new_year_dated_from_previous_year(self):
+        ws = self._make_ws([("KW40", "Mo"), ("KW52", "Fr"), ("KW1", "Mo"), ("KW39", "Fr")])
+        dm = build_date_map(ws, today=date(2027, 8, 1))
+        assert dm[6] == date(2026, 9, 28)
+        assert dm[8] == date(2027, 1, 4)
+
+    def test_closest_span_to_today_wins(self):
+        ws = self._make_ws([("KW18", "Mo")])
+        dm = build_date_map(ws, today=date(2026, 10, 13))
+        assert dm[6] == date(2026, 4, 27)
+
+    def test_explicit_year_bypasses_inference(self):
+        ws = self._make_ws([("KW18", "Mo")])
+        dm = build_date_map(ws, year=2030, today=date(2026, 1, 1))
+        assert dm[6] == date(2030, 4, 29)
+
+    def test_sheet_without_week_numbers_returns_empty_map(self):
+        ws = self._make_ws([("", "Mo"), ("", "Di")])
+        assert build_date_map(ws, today=date(2026, 10, 13)) == {}
+
+
 # ---------------------------------------------------------------------------
 # parse_members
 # ---------------------------------------------------------------------------
@@ -255,7 +300,7 @@ class TestParseMembers:
         grace = next(m for m in members if m.name == "Grace")
         assert grace.is_migration_member is True
 
-    def test_uses_real_header_dates_for_a_late_starting_sheet(self):
+    def test_uses_real_header_dates_for_a_late_starting_sheet(self, parser_today_2026):
         # Regression test for the real production bug: a sheet whose data columns start
         # at a week far from the old hardcoded BASE_DATE (April 27, 2026) must still be
         # dated correctly, derived from its own header cells.
@@ -269,3 +314,14 @@ class TestParseMembers:
         members, _ = parse_members(ws)
         hilde = next(m for m in members if m.name == "Hilde")
         assert date(2026, 7, 20) in hilde.absence_days
+
+    def test_precomputed_date_map_used_as_is(self):
+        wb = Workbook()
+        ws = wb.active
+        ws.cell(row=1, column=6, value="KW18")
+        ws.cell(row=2, column=6, value="Mo")
+        ws.cell(row=3, column=3, value="x")
+        ws.cell(row=3, column=4, value="Ida")
+        ws.cell(row=3, column=6, value="x")
+        members, _ = parse_members(ws, date_map={6: date(2030, 1, 7)})
+        assert members[0].absence_days == [date(2030, 1, 7)]

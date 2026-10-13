@@ -4,8 +4,24 @@ from datetime import date
 from openpyxl import Workbook
 
 
+class _SampleDataDate(date):
+    """`date` whose today() lies inside the sample data (late April 2026)."""
+
+    @classmethod
+    def today(cls):
+        return date(2026, 5, 1)
+
+
 @pytest.fixture
-def sample_workbook():
+def parser_today_2026(monkeypatch):
+    """Pin the parser's notion of "today" so year-less sample sheets (KW labels only) are
+    always dated in 2026, regardless of when the suite runs (the parser infers the year
+    from today's date)."""
+    monkeypatch.setattr("absence_dashboard.parser.date", _SampleDataDate)
+
+
+@pytest.fixture
+def sample_workbook(parser_today_2026):
     """
     Minimal workbook matching the confirmed grid layout:
       Row 1: CW labels  |  Row 2: Weekday names
