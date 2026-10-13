@@ -19,6 +19,10 @@ python run.py path/to/absences.xlsx
 # Open http://localhost:5002
 ```
 
+The timeline shows a rolling 12 months from the current week. Use **From / To** (`MM/YYYY`)
+in the header to look at any other period, and **Reset** to return to the rolling view. See
+[specs/007-extend-timeline-filter/quickstart.md](specs/007-extend-timeline-filter/quickstart.md).
+
 ## Standalone Windows Build (Citrix / Server 2016)
 
 A self-contained Windows package is also available — no Python install, no administrator rights,

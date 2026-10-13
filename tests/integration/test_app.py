@@ -20,7 +20,7 @@ def get_member(data, name):
 # ---------------------------------------------------------------------------
 # Fixtures for cumul risk / sole coverage tests (T020 / US2)
 # Dates are computed relative to today so the fixture stays valid regardless
-# of when the suite runs (calendar_weeks only spans today..CW53 of this year).
+# of when the suite runs (calendar_weeks spans the rolling 12 months from today).
 # 3 consecutive weeks starting from the week after today: Alice absent
 # week1 Mon - week2 Mon (8 cal days, critical); Bob absent week2 Mon -
 # week3 Mon (8 cal days, critical). They share week2's Monday. Carol never
@@ -36,18 +36,16 @@ def _monday_of_iso_week(year, week):
 def critical_weeks():
     from datetime import date, timedelta
     today_iso = date.today().isocalendar()
-    start_week = today_iso.week + 1
-    year = today_iso.year
-    mondays = [
-        _monday_of_iso_week(year, start_week),
-        _monday_of_iso_week(year, start_week + 1),
-        _monday_of_iso_week(year, start_week + 2),
-    ]
-    week_numbers = [start_week, start_week + 1, start_week + 2]
+    this_monday = _monday_of_iso_week(today_iso.year, today_iso.week)
+    # Step by whole weeks from the date (not week number + n) so the fixture stays valid
+    # when the three weeks cross a year boundary.
+    mondays = [this_monday + timedelta(weeks=k) for k in (1, 2, 3)]
+    week_numbers = [m.isocalendar().week for m in mondays]
+    keys = [f"{m.isocalendar().year}-W{m.isocalendar().week:02d}" for m in mondays]
     weekday_columns = [
         [mon + timedelta(days=offset) for offset in range(5)] for mon in mondays
     ]
-    return {"year": year, "week_numbers": week_numbers, "days": weekday_columns}
+    return {"week_numbers": week_numbers, "keys": keys, "days": weekday_columns}
 
 
 @pytest.fixture
@@ -167,11 +165,24 @@ class TestGetDashboard:
         assert weeks[0]["year"] == iso.year
         assert weeks[0]["week_number"] == iso.week
 
-    def test_calendar_weeks_ends_at_cw53_2026(self, client):
+    def test_calendar_weeks_end_at_week_containing_today_next_year(self, client):
+        from absence_dashboard.timeline import build_calendar_weeks, default_range
         data = client.get("/api/dashboard").get_json()
-        weeks = data["calendar_weeks"]
-        assert weeks[-1]["year"] == 2026
-        assert weeks[-1]["week_number"] == 53
+        expected = build_calendar_weeks(*default_range(date.today()))
+        assert data["calendar_weeks"][-1]["key"] == expected[-1]["key"]
+        assert date.fromisoformat(data["calendar_weeks"][-1]["start"]) > date.today()
+
+    def test_calendar_weeks_have_unique_key(self, client):
+        data = client.get("/api/dashboard").get_json()
+        keys = [w["key"] for w in data["calendar_weeks"]]
+        assert len(keys) == len(set(keys))
+        for w in data["calendar_weeks"]:
+            assert w["key"] == f"{w['year']}-W{w['week_number']:02d}"
+
+    def test_calendar_week_label_contains_year(self, client):
+        data = client.get("/api/dashboard").get_json()
+        for w in data["calendar_weeks"]:
+            assert w["label"].startswith(f"CW{w['week_number']} {w['year']} |")
 
     def test_no_duplicate_calendar_weeks(self, client):
         data = client.get("/api/dashboard").get_json()
@@ -203,10 +214,10 @@ class TestGetDashboard:
     def test_calendar_week_label_format(self, client):
         import re
         data = client.get("/api/dashboard").get_json()
-        pattern = re.compile(r"^CW\d{1,2} \| \d{1,2} [A-Z][a-z]{2}$")
+        pattern = re.compile(r"^CW\d{1,2} \d{4} \| \d{1,2} [A-Z][a-z]{2}$")
         for week in data["calendar_weeks"]:
             assert pattern.match(week["label"]), (
-                f"Label '{week['label']}' does not match 'CW[N] | D Mon' format"
+                f"Label '{week['label']}' does not match 'CW[N] YYYY | D Mon' format"
             )
 
     def test_skipped_rows_present(self, client):
@@ -505,9 +516,9 @@ class TestCumulRiskWeeks:
         data = critical_client.get("/api/dashboard").get_json()
         alice = get_member(data, "Alice")
         bob = get_member(data, "Bob")
-        week2 = critical_weeks["week_numbers"][1]
-        assert {"group": "Risk Group", "week_number": week2} in alice["cumul_risks"]
-        assert {"group": "Risk Group", "week_number": week2} in bob["cumul_risks"]
+        week2 = critical_weeks["keys"][1]
+        assert {"group": "Risk Group", "week_key": week2} in alice["cumul_risks"]
+        assert {"group": "Risk Group", "week_key": week2} in bob["cumul_risks"]
 
     def test_non_overlapping_weeks_not_flagged(self, critical_client, critical_weeks):
         critical_client.post(
@@ -516,8 +527,8 @@ class TestCumulRiskWeeks:
         )
         data = critical_client.get("/api/dashboard").get_json()
         alice = get_member(data, "Alice")
-        weeks = {r["week_number"] for r in alice["cumul_risks"] if r["group"] == "Risk Group"}
-        week1, _, week3 = critical_weeks["week_numbers"]
+        weeks = {r["week_key"] for r in alice["cumul_risks"] if r["group"] == "Risk Group"}
+        week1, _, week3 = critical_weeks["keys"]
         assert week1 not in weeks
         assert week3 not in weeks
 
@@ -553,8 +564,8 @@ class TestSoleCoverage:
         )
         data = critical_client.get("/api/dashboard").get_json()
         carol = get_member(data, "Carol")
-        week2 = critical_weeks["week_numbers"][1]
-        assert {"group": "Sole Group", "week_number": week2} in carol["sole_coverage"]
+        week2 = critical_weeks["keys"][1]
+        assert {"group": "Sole Group", "week_key": week2} in carol["sole_coverage"]
 
     def test_weeks_where_carol_not_sole_are_not_flagged(self, critical_client, critical_weeks):
         critical_client.post(
@@ -563,8 +574,8 @@ class TestSoleCoverage:
         )
         data = critical_client.get("/api/dashboard").get_json()
         carol = get_member(data, "Carol")
-        weeks = {r["week_number"] for r in carol["sole_coverage"] if r["group"] == "Sole Group"}
-        week1, _, week3 = critical_weeks["week_numbers"]
+        weeks = {r["week_key"] for r in carol["sole_coverage"] if r["group"] == "Sole Group"}
+        week1, _, week3 = critical_weeks["keys"]
         assert week1 not in weeks
         assert week3 not in weeks
 
@@ -576,9 +587,178 @@ class TestSoleCoverage:
         data = critical_client.get("/api/dashboard").get_json()
         alice = get_member(data, "Alice")
         bob = get_member(data, "Bob")
-        week1, _, week3 = critical_weeks["week_numbers"]
-        assert {"group": "Risk Group", "week_number": week1} in bob["sole_coverage"]
-        assert {"group": "Risk Group", "week_number": week3} in alice["sole_coverage"]
+        week1, _, week3 = critical_weeks["keys"]
+        assert {"group": "Risk Group", "week_key": week1} in bob["sole_coverage"]
+        assert {"group": "Risk Group", "week_key": week3} in alice["sole_coverage"]
+
+
+# ---------------------------------------------------------------------------
+# Time range filter  (feature 007 / US2)
+# ---------------------------------------------------------------------------
+
+class TestTimeRangeFilter:
+    def test_filtered_weeks_touch_selected_months_only(self, client):
+        res = client.get("/api/dashboard?from=11/2026&to=02/2027")
+        assert res.status_code == 200
+        keys = [w["key"] for w in res.get_json()["calendar_weeks"]]
+        assert keys[0] == "2026-W45"   # Sun 1 Nov excludes W44
+        assert keys[-1] == "2027-W08"  # Sun 28 Feb is the last day
+        assert keys.count("2026-W53") == 1
+
+    def test_filtered_time_range_in_payload(self, client):
+        data = client.get("/api/dashboard?from=11/2026&to=02/2027").get_json()
+        assert data["time_range"] == {
+            "start": "2026-11-01", "end": "2027-02-28",
+            "from": "11/2026", "to": "02/2027", "is_default": False,
+        }
+
+    def test_single_digit_month_normalised(self, client):
+        data = client.get("/api/dashboard?from=1/2027&to=3/2027").get_json()
+        assert (data["time_range"]["from"], data["time_range"]["to"]) == ("01/2027", "03/2027")
+
+    def test_no_params_is_rolling_default(self, client):
+        data = client.get("/api/dashboard").get_json()
+        assert data["time_range"]["is_default"] is True
+
+    def test_invalid_month_returns_400(self, client):
+        res = client.get("/api/dashboard?from=13/2026&to=02/2027")
+        assert res.status_code == 400
+        assert "MM/YYYY" in res.get_json()["error"]
+
+    def test_only_from_returns_400(self, client):
+        res = client.get("/api/dashboard?from=11/2026")
+        assert res.status_code == 400
+        assert "MM/YYYY" in res.get_json()["error"]
+
+    def test_to_before_from_returns_400(self, client):
+        res = client.get("/api/dashboard?from=02/2027&to=01/2027")
+        assert res.status_code == 400
+        assert "error" in res.get_json()
+
+    def test_refresh_accepts_range(self, client):
+        res = client.post("/api/refresh?from=11/2026&to=02/2027")
+        assert res.status_code == 200
+        assert res.get_json()["time_range"]["from"] == "11/2026"
+
+    def test_refresh_rejects_invalid_range_before_reloading(self, client, monkeypatch):
+        def must_not_reload(source):
+            raise AssertionError("Excel file reloaded despite invalid range")
+        monkeypatch.setattr("absence_dashboard.app._load_excel", must_not_reload)
+        res = client.post("/api/refresh?from=bad&to=02/2027")
+        assert res.status_code == 400
+
+    def test_data_in_range_true_when_file_covers_range(self, client):
+        # sample file covers 2026-04-27 .. 2026-05-05
+        data = client.get("/api/dashboard?from=04/2026&to=05/2026").get_json()
+        assert data["data_in_range"] is True
+
+    def test_data_in_range_false_when_file_has_no_data_in_range(self, client):
+        data = client.get("/api/dashboard?from=01/2030&to=02/2030").get_json()
+        assert data["data_in_range"] is False
+
+    def test_phase_outside_range_still_listed(self, client):
+        client.post("/api/phases",
+                    json={"name": "Summer", "start_date": "2027-06-01", "end_date": "2027-06-30"})
+        data = client.get("/api/dashboard?from=01/2027&to=03/2027").get_json()
+        assert [p["name"] for p in data["phases"]] == ["Summer"]
+        phases = client.get("/api/phases").get_json()["phases"]
+        assert [p["name"] for p in phases] == ["Summer"]
+
+    def test_multi_year_range_keeps_same_numbered_weeks_apart(self, client):
+        weeks = client.get("/api/dashboard?from=01/2027&to=12/2028").get_json()["calendar_weeks"]
+        by_key = {w["key"]: w for w in weeks}
+        assert "2027-W05" in by_key and "2028-W05" in by_key
+        assert by_key["2027-W05"]["label"] != by_key["2028-W05"]["label"]
+
+
+# ---------------------------------------------------------------------------
+# Filtering only hides weeks — risk results are unchanged  (feature 007 / US3)
+# Month boundary M = 1st of the month two months from today. Alice is absent the 5
+# working days before M plus the first 3 working days from M (one critical block that
+# starts before the filtered range); Bob is absent the first 6 working days from M.
+# ---------------------------------------------------------------------------
+
+def _working_days(start, count, step=1):
+    from datetime import timedelta
+    days, d = [], start
+    while len(days) < count:
+        if d.weekday() < 5:
+            days.append(d)
+        d += timedelta(days=step)
+    return days
+
+
+@pytest.fixture
+def boundary(tmp_path):
+    from datetime import timedelta
+    from openpyxl import Workbook
+    today = date.today()
+    month = today.month + 2
+    m = date(today.year + (month - 1) // 12, (month - 1) % 12 + 1, 1)
+    before = sorted(_working_days(m - timedelta(days=1), 7, step=-1))
+    after = _working_days(m, 10)
+    columns = before + after
+
+    wb = Workbook()
+    ws = wb.active
+    weekday_abbrev = ["Mo", "Di", "Mi", "Do", "Fr"]
+    for col, d in enumerate(columns, start=6):
+        ws.cell(row=1, column=col, value=f"KW{d.isocalendar().week}")
+        ws.cell(row=2, column=col, value=weekday_abbrev[d.weekday()])
+    for row, name in ((3, "Alice"), (4, "Bob")):
+        ws.cell(row=row, column=3, value="x")
+        ws.cell(row=row, column=4, value=name)
+    for col, d in enumerate(columns, start=6):
+        if d in before[-5:] or d in after[:3]:
+            ws.cell(row=3, column=col, value="x")
+        if d in after[:6]:
+            ws.cell(row=4, column=col, value="x")
+    path = tmp_path / "boundary.xlsx"
+    wb.save(str(path))
+
+    from absence_dashboard.app import create_app
+    flask_app = create_app(str(path), state_path=str(tmp_path / "boundary_state.json"))
+    flask_app.config["TESTING"] = True
+    client = flask_app.test_client()
+    client.post("/api/cumul-groups", json={"name": "Pair", "members": ["Alice", "Bob"]})
+    first_after = after[0].isocalendar()
+    return {
+        "client": client,
+        "month": f"{m:%m/%Y}",
+        "first_week_key": f"{first_after.year}-W{first_after.week:02d}",
+    }
+
+
+class TestFilterDoesNotChangeRisk:
+    def _entries_by_member(self, data, keys):
+        return {
+            m["name"]: (
+                sorted((r["group"], r["week_key"]) for r in m["cumul_risks"] if r["week_key"] in keys),
+                sorted((r["group"], r["week_key"]) for r in m["sole_coverage"] if r["week_key"] in keys),
+            )
+            for m in data["members"]
+        }
+
+    def test_absence_starting_before_range_still_critical(self, boundary):
+        client, month = boundary["client"], boundary["month"]
+        data = client.get(f"/api/dashboard?from={month}&to={month}").get_json()
+        alice = get_member(data, "Alice")
+        assert {"group": "Pair", "week_key": boundary["first_week_key"]} in alice["cumul_risks"]
+
+    def test_markers_identical_filtered_and_unfiltered(self, boundary):
+        client, month = boundary["client"], boundary["month"]
+        filtered = client.get(f"/api/dashboard?from={month}&to={month}").get_json()
+        unfiltered = client.get("/api/dashboard").get_json()
+        keys = {w["key"] for w in filtered["calendar_weeks"]}
+        assert keys <= {w["key"] for w in unfiltered["calendar_weeks"]}
+        assert self._entries_by_member(filtered, keys) == self._entries_by_member(unfiltered, keys)
+
+    def test_merged_blocks_not_clipped(self, boundary):
+        client, month = boundary["client"], boundary["month"]
+        filtered = client.get(f"/api/dashboard?from={month}&to={month}").get_json()
+        unfiltered = client.get("/api/dashboard").get_json()
+        assert {m["name"]: m["merged_blocks"] for m in filtered["members"]} == \
+            {m["name"]: m["merged_blocks"] for m in unfiltered["members"]}
 
 
 # ---------------------------------------------------------------------------

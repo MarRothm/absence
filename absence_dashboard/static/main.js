@@ -2,6 +2,7 @@
 
 let dashboardData = null;
 let showAll = false; // FR-027: display mode toggle
+let timeFilter = null; // { from, to } as MM/YYYY, or null = rolling 12-month default — session only
 
 // ---------------------------------------------------------------------------
 // Last-loaded timestamp display  (FR-025)
@@ -34,6 +35,12 @@ async function apiFetch(url, method = "GET", body = null) {
   return { ok: res.ok, status: res.status, data: json };
 }
 
+// Dashboard-returning endpoints carry the applied time filter, if any.
+function dashboardUrl(path) {
+  if (!timeFilter) return path;
+  return `${path}?${new URLSearchParams({ from: timeFilter.from, to: timeFilter.to })}`;
+}
+
 // ---------------------------------------------------------------------------
 // Warnings banner
 // ---------------------------------------------------------------------------
@@ -62,17 +69,17 @@ const DAY_ABBR = ["M", "T", "W", "T", "F"];
 // Build a flat ordered list of all day-date strings across all weeks.
 function buildDayIndex(weeks) {
   const days = [];
-  weeks.forEach(cw => cw.days.forEach(d => days.push({ date: d, week: cw.week_number })));
+  weeks.forEach(cw => cw.days.forEach(d => days.push({ date: d, week: cw.key })));
   return days;
 }
 
-// Groups a member's cumul_risks (or sole_coverage) entries by week_number.
-// Returns a Map: week_number → [group name, ...]
+// Groups a member's cumul_risks (or sole_coverage) entries by week_key ("YYYY-Www").
+// Returns a Map: week_key → [group name, ...]
 function groupByWeek(entries) {
   const map = new Map();
-  (entries || []).forEach(({ group, week_number }) => {
-    if (!map.has(week_number)) map.set(week_number, []);
-    map.get(week_number).push(group);
+  (entries || []).forEach(({ group, week_key }) => {
+    if (!map.has(week_key)) map.set(week_key, []);
+    map.get(week_key).push(group);
   });
   return map;
 }
@@ -121,6 +128,8 @@ function renderTimeline(data) {
 
   const weeks = data.calendar_weeks;
   const dayIndex = buildDayIndex(weeks);
+  // week_key → "CW5 2027", for tooltips (week numbers alone repeat across years)
+  const weekLabel = new Map(weeks.map(cw => [cw.key, `CW${cw.week_number} ${cw.year}`]));
 
   // ---- Header row 1: CW labels (each spanning 5 day sub-columns) ----
   const cwHeaderRow = document.createElement("div");
@@ -133,7 +142,12 @@ function renderTimeline(data) {
     const group = document.createElement("div");
     group.className = "tg-cw-group";
     group.title = `${cw.start} – ${cw.end}`;
-    group.textContent = cw.label;
+    // "CW42 2026 | 12 Oct" → two lines: week + year, then the Monday's date
+    cw.label.split(" | ").forEach(part => {
+      const line = document.createElement("span");
+      line.textContent = part;
+      group.appendChild(line);
+    });
     cwHeaderRow.appendChild(group);
   });
   grid.appendChild(cwHeaderRow);
@@ -155,10 +169,13 @@ function renderTimeline(data) {
 
   // ---- Phase banner rows (one per phase, overlapping phases stack) ----
   const cumulRiskWeekSet = new Set(
-    data.members.flatMap(m => (m.cumul_risks || []).map(r => r.week_number))
+    data.members.flatMap(m => (m.cumul_risks || []).map(r => r.week_key))
   );
 
   (data.phases || []).forEach(phase => {
+    // Phases entirely outside the visible range get no row (still listed in the Phases panel)
+    if (!dayIndex.some(({ date: d }) => d >= phase.start_date && d <= phase.end_date)) return;
+
     const row = document.createElement("div");
     row.className = "tg-row tg-phase-row";
 
@@ -232,11 +249,11 @@ function renderTimeline(data) {
     soleGroups.forEach(groupName => {
       const weeks = (member.sole_coverage || [])
         .filter(r => r.group === groupName)
-        .map(r => r.week_number);
+        .map(r => weekLabel.get(r.week_key) || r.week_key);
       const badge = document.createElement("span");
       badge.className = "sole-coverage-badge";
       badge.textContent = "Sole";
-      badge.title = `Sole coverage for "${groupName}": CW${weeks.join(", CW")}`;
+      badge.title = `Sole coverage for "${groupName}": ${weeks.join(", ")}`;
       nameCellEl.appendChild(badge);
     });
     row.appendChild(nameCellEl);
@@ -255,7 +272,7 @@ function renderTimeline(data) {
 
       if (cls === "cumul-risk") {
         const groups = cumulRiskWeekMap.get(week) || [];
-        cell.title = `Cumul risk CW${week}: ${groups.join(", ")}`;
+        cell.title = `Cumul risk ${weekLabel.get(week)}: ${groups.join(", ")}`;
         if (!labeledWeeks.has(week)) {
           labeledWeeks.add(week);
           const label = document.createElement("span");
@@ -777,6 +794,92 @@ document.getElementById("btn-toggle-clusters").addEventListener("click", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Time filter  (feature 007)
+// ---------------------------------------------------------------------------
+
+const MONTH_RE = /^(0?[1-9]|1[0-2])\/(\d{4})$/;
+
+function isValidMonth(s) {
+  return MONTH_RE.test(s);
+}
+
+// "03/2027" → comparable month number
+function monthIndex(s) {
+  const [, month, year] = s.match(MONTH_RE);
+  return Number(year) * 12 + Number(month);
+}
+
+function showTimeError(msg) {
+  const el = document.getElementById("time-error");
+  el.textContent = msg;
+  el.classList.remove("hidden");
+}
+
+function hideTimeError() {
+  document.getElementById("time-error").classList.add("hidden");
+}
+
+// Always show which range is applied (FR-009) and flag ranges without data (FR-013).
+function renderTimeRange(data) {
+  const range = data.time_range;
+  const status = document.getElementById("time-range-status");
+  const weeks = data.calendar_weeks;
+  if (range.is_default) {
+    const first = weeks[0], last = weeks[weeks.length - 1];
+    status.textContent = weeks.length
+      ? `Rolling 12 months (CW${first.week_number} ${first.year} – CW${last.week_number} ${last.year})`
+      : "Rolling 12 months";
+  } else {
+    status.textContent = `${range.from} – ${range.to}`;
+    document.getElementById("time-from").value = range.from;
+    document.getElementById("time-to").value = range.to;
+  }
+
+  const notice = document.querySelector('[data-warn-id="no-data-in-range"]');
+  if (notice) notice.remove();
+  if (data.data_in_range === false) {
+    showWarning("The loaded file contains no data for the selected range.", "no-data-in-range");
+  }
+}
+
+async function applyTimeFilter() {
+  const from = document.getElementById("time-from").value.trim();
+  const to = document.getElementById("time-to").value.trim();
+  if (!isValidMonth(from) || !isValidMonth(to)) {
+    showTimeError("Enter both months as MM/YYYY, e.g. 03/2027.");
+    return;
+  }
+  if (monthIndex(to) < monthIndex(from)) {
+    showTimeError("'To' month must be the same as or later than 'From' month.");
+    return;
+  }
+  const previous = timeFilter;
+  timeFilter = { from, to };
+  const res = await refreshDashboard();
+  if (res.ok) {
+    hideTimeError();
+  } else {
+    timeFilter = previous; // keep the range that is still on screen (FR-006)
+    if (res.status === 400) showTimeError(res.data.error);
+  }
+}
+
+document.getElementById("btn-time-apply").addEventListener("click", applyTimeFilter);
+["time-from", "time-to"].forEach(id => {
+  document.getElementById(id).addEventListener("keydown", e => {
+    if (e.key === "Enter") applyTimeFilter();
+  });
+});
+
+document.getElementById("btn-time-reset").addEventListener("click", async () => {
+  timeFilter = null;
+  document.getElementById("time-from").value = "";
+  document.getElementById("time-to").value = "";
+  hideTimeError();
+  await refreshDashboard();
+});
+
+// ---------------------------------------------------------------------------
 // Reload / refresh  (US5)
 // ---------------------------------------------------------------------------
 
@@ -785,7 +888,7 @@ document.getElementById("btn-reload").addEventListener("click", async () => {
   btn.disabled = true;
   btn.textContent = "⟳ Reloading…";
   try {
-    const res = await apiFetch("/api/refresh", "POST");
+    const res = await apiFetch(dashboardUrl("/api/refresh"), "POST");
     if (res.ok) {
       dashboardData = res.data;
       updateLastLoaded(dashboardData.last_loaded);
@@ -794,6 +897,7 @@ document.getElementById("btn-reload").addEventListener("click", async () => {
       renderClusters(dashboardData);
       renderPhases(dashboardData);
       clearWarnings();
+      renderTimeRange(dashboardData);
       if (dashboardData.removed_stale_references &&
           dashboardData.removed_stale_references.length > 0) {
         showWarning(
@@ -820,10 +924,11 @@ document.getElementById("btn-reload").addEventListener("click", async () => {
 // ---------------------------------------------------------------------------
 
 async function refreshDashboard() {
-  const res = await apiFetch("/api/dashboard");
+  const res = await apiFetch(dashboardUrl("/api/dashboard"));
   if (!res.ok) {
-    showWarning("Failed to load dashboard data.");
-    return;
+    // 400 = rejected time filter; the Apply handler reports it next to the inputs
+    if (res.status !== 400) showWarning("Failed to load dashboard data.");
+    return res;
   }
   dashboardData = res.data;
   updateLastLoaded(dashboardData.last_loaded);
@@ -831,11 +936,13 @@ async function refreshDashboard() {
   renderCumulGroups(dashboardData);
   renderClusters(dashboardData);
   renderPhases(dashboardData);
+  renderTimeRange(dashboardData);
   if (dashboardData.skipped_rows && dashboardData.skipped_rows.length > 0) {
     showWarning(
       `${dashboardData.skipped_rows.length} row(s) skipped due to empty name in Column D.`
     );
   }
+  return res;
 }
 
 refreshDashboard();

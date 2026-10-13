@@ -1,7 +1,7 @@
 import os
 import sys
 import warnings
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 # Suppress urllib3's LibreSSL warning on macOS — harmless for a local-only tool
 warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
@@ -9,7 +9,7 @@ warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
 from flask import Flask, jsonify, request
 
 from absence_dashboard import data_fetcher
-from absence_dashboard.parser import parse_members
+from absence_dashboard.parser import build_date_map, parse_members
 from absence_dashboard.merger import merge_periods
 from absence_dashboard.state import load_state, save_state, AppState
 from absence_dashboard.phases_manager import add_phase, remove_phase, update_phase
@@ -21,40 +21,8 @@ from absence_dashboard.cumul_groups import (
     compute_cumul_risk_weeks,
     compute_sole_coverage_weeks,
 )
+from absence_dashboard.timeline import build_calendar_weeks, resolve_range
 from absence_dashboard.launch_config import load_launch_config, DEFAULT_PORT
-
-
-# ---------------------------------------------------------------------------
-# Calendar week helpers
-# ---------------------------------------------------------------------------
-
-def _last_iso_week(year: int) -> int:
-    return date(year, 12, 28).isocalendar().week
-
-
-def _build_calendar_weeks(today: date = None) -> list:
-    if today is None:
-        today = date.today()
-    last_week = _last_iso_week(2026)
-    iso = today.isocalendar()
-    year, week = iso.year, iso.week
-    weeks = []
-    while (year < 2026) or (year == 2026 and week <= last_week):
-        monday = date.fromisocalendar(year, week, 1)
-        friday = monday + timedelta(days=4)
-        days = [(monday + timedelta(days=i)).isoformat() for i in range(5)]
-        weeks.append({
-            "year": year,
-            "week_number": week,
-            "label": f"CW{week} | {monday.day} {monday.strftime('%b')}",
-            "start": monday.isoformat(),
-            "end": friday.isoformat(),
-            "days": days,
-        })
-        next_monday = monday + timedelta(weeks=1)
-        next_iso = next_monday.isocalendar()
-        year, week = next_iso.year, next_iso.week
-    return weeks
 
 
 # ---------------------------------------------------------------------------
@@ -64,12 +32,15 @@ def _build_calendar_weeks(today: date = None) -> list:
 def _load_excel(source: str) -> tuple:
     wb = data_fetcher.get_workbook(source)
     ws = wb.active
-    members, skipped = parse_members(ws)
+    date_map = build_date_map(ws)
+    members, skipped = parse_members(ws, date_map=date_map)
     wb.close()
     for m in members:
         m.merged_blocks = merge_periods(m.absence_days)
+    # First/last date the file covers — tells the dashboard whether a range has any data
+    data_range = (min(date_map.values()), max(date_map.values())) if date_map else None
     last_loaded = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-    return members, skipped, last_loaded
+    return members, skipped, data_range, last_loaded
 
 
 # ---------------------------------------------------------------------------
@@ -93,25 +64,34 @@ def _sort_members(members_data: list, clusters: list) -> list:
 # Dashboard assembler
 # ---------------------------------------------------------------------------
 
-def _assemble_dashboard(app) -> dict:
+def _requested_range() -> tuple:
+    """(start, end, is_default) from the request's optional `from`/`to` (MM/YYYY) query
+    parameters. Raises ValueError for an invalid range."""
+    return resolve_range(request.args.get("from"), request.args.get("to"), date.today())
+
+
+def _assemble_dashboard(app, start: date, end: date, is_default: bool) -> dict:
     members = app.config["MEMBERS"]
     state = app.config["STATE"]
-    calendar_weeks = _build_calendar_weeks()
+    # Only the visible weeks are built; critical absences below still come from each
+    # member's full merged blocks, so the range never changes how risks are computed.
+    calendar_weeks = build_calendar_weeks(start, end)
+    data_range = app.config["DATA_RANGE"]
 
     member_critical_date_sets = {m.name: critical_absence_days(m.merged_blocks) for m in members}
     cumul_risks_by_member: dict = {}
     sole_coverage_by_member: dict = {}
     for group in state.cumul_groups:
-        for week_number in compute_cumul_risk_weeks(group, member_critical_date_sets, calendar_weeks):
+        for week_key in compute_cumul_risk_weeks(group, member_critical_date_sets, calendar_weeks):
             for member_name in group["members"]:
                 cumul_risks_by_member.setdefault(member_name, []).append(
-                    {"group": group["name"], "week_number": week_number}
+                    {"group": group["name"], "week_key": week_key}
                 )
         sole_weeks = compute_sole_coverage_weeks(group, member_critical_date_sets, calendar_weeks)
         for member_name, weeks in sole_weeks.items():
-            for week_number in weeks:
+            for week_key in weeks:
                 sole_coverage_by_member.setdefault(member_name, []).append(
-                    {"group": group["name"], "week_number": week_number}
+                    {"group": group["name"], "week_key": week_key}
                 )
 
     result_members = []
@@ -133,6 +113,14 @@ def _assemble_dashboard(app) -> dict:
 
     return {
         "calendar_weeks": calendar_weeks,
+        "time_range": {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "from": f"{start:%m/%Y}",
+            "to": f"{end:%m/%Y}",
+            "is_default": is_default,
+        },
+        "data_in_range": data_range is not None and data_range[0] <= end and data_range[1] >= start,
         "members": result_members,
         "skill_clusters": state.clusters,
         "phases": state.phases,
@@ -152,12 +140,13 @@ def _assemble_dashboard(app) -> dict:
 def create_app(excel_source: str, state_path: str = "state/state.json") -> Flask:
     app = Flask(__name__, static_folder="static")
 
-    members, skipped, last_loaded = _load_excel(excel_source)
+    members, skipped, data_range, last_loaded = _load_excel(excel_source)
     app.config.update({
         "EXCEL_SOURCE": excel_source,
         "STATE_PATH": state_path,
         "MEMBERS": members,
         "SKIPPED_ROWS": skipped,
+        "DATA_RANGE": data_range,
         "STATE": load_state(state_path),
         "LAST_LOADED": last_loaded,
     })
@@ -176,7 +165,11 @@ def create_app(excel_source: str, state_path: str = "state/state.json") -> Flask
 
     @app.route("/api/dashboard")
     def get_dashboard():
-        return jsonify(_assemble_dashboard(app))
+        try:
+            visible_range = _requested_range()
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        return jsonify(_assemble_dashboard(app, *visible_range))
 
     # ------------------------------------------------------------------
     # POST /api/refresh
@@ -185,7 +178,11 @@ def create_app(excel_source: str, state_path: str = "state/state.json") -> Flask
     @app.route("/api/refresh", methods=["POST"])
     def post_refresh():
         try:
-            members, skipped, last_loaded = _load_excel(app.config["EXCEL_SOURCE"])
+            visible_range = _requested_range()
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        try:
+            members, skipped, data_range, last_loaded = _load_excel(app.config["EXCEL_SOURCE"])
         except Exception as e:
             return jsonify({"error": str(e), "stale_data": True}), 422
 
@@ -222,10 +219,11 @@ def create_app(excel_source: str, state_path: str = "state/state.json") -> Flask
 
         app.config["MEMBERS"] = members
         app.config["SKIPPED_ROWS"] = skipped
+        app.config["DATA_RANGE"] = data_range
         app.config["LAST_LOADED"] = last_loaded
         save_state(state, app.config["STATE_PATH"])
 
-        result = _assemble_dashboard(app)
+        result = _assemble_dashboard(app, *visible_range)
         result["removed_stale_references"] = removed
         return jsonify(result)
 

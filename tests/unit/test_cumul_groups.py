@@ -19,6 +19,7 @@ VALID = {"Alice", "Bob", "Carol", "Dave"}
 
 def _week(year, week_number, days):
     return {
+        "key": f"{year}-W{week_number:02d}",
         "year": year,
         "week_number": week_number,
         "label": f"KW{week_number}",
@@ -244,7 +245,7 @@ class TestComputeCumulRiskWeeks:
         )
         member_critical_date_sets = {"Alice": alice_critical, "Bob": bob_critical}
         weeks = compute_cumul_risk_weeks(group, member_critical_date_sets, CALENDAR_WEEKS)
-        assert weeks == [19]
+        assert weeks == ["2026-W19"]
 
     def test_no_overlap_no_risk(self):
         group = {"name": "No Risk", "members": ["Alice", "Bob"]}
@@ -269,6 +270,20 @@ class TestComputeCumulRiskWeeks:
         weeks = compute_cumul_risk_weeks(group, member_critical_date_sets, CALENDAR_WEEKS)
         assert weeks == []
 
+    def test_same_week_number_in_different_years_kept_apart(self):
+        group = {"name": "Risk Group", "members": ["Alice", "Bob"]}
+        weeks_2026 = _week(2026, 5, [date(2026, 1, 26 + i) for i in range(5)])
+        weeks_2027 = _week(2027, 5, [date(2027, 2, 1 + i) for i in range(5)])
+        alice_critical = critical_absence_days(
+            [AbsencePeriod(date(2027, 1, 28), date(2027, 2, 3))]
+        )
+        bob_critical = critical_absence_days(
+            [AbsencePeriod(date(2027, 2, 1), date(2027, 2, 8))]
+        )
+        member_critical_date_sets = {"Alice": alice_critical, "Bob": bob_critical}
+        weeks = compute_cumul_risk_weeks(group, member_critical_date_sets, [weeks_2026, weeks_2027])
+        assert weeks == ["2027-W05"]
+
 
 class TestComputeSoleCoverageWeeks:
     def test_two_member_group_sole_coverage_both_directions(self):
@@ -281,10 +296,10 @@ class TestComputeSoleCoverageWeeks:
         )
         member_critical_date_sets = {"Alice": alice_critical, "Bob": bob_critical}
         result = compute_sole_coverage_weeks(group, member_critical_date_sets, CALENDAR_WEEKS)
-        assert result.get("Bob") == [18]
-        assert result.get("Alice") == [20]
-        assert 19 not in result.get("Alice", [])
-        assert 19 not in result.get("Bob", [])
+        assert result.get("Bob") == ["2026-W18"]
+        assert result.get("Alice") == ["2026-W20"]
+        assert "2026-W19" not in result.get("Alice", [])
+        assert "2026-W19" not in result.get("Bob", [])
 
     def test_three_member_group_flags_sole_present_member(self):
         group = {"name": "Sole Group", "members": ["Alice", "Bob", "Carol"]}
@@ -298,9 +313,9 @@ class TestComputeSoleCoverageWeeks:
             "Alice": alice_critical, "Bob": bob_critical, "Carol": set(),
         }
         result = compute_sole_coverage_weeks(group, member_critical_date_sets, CALENDAR_WEEKS)
-        assert result.get("Carol") == [19]
-        assert 18 not in result.get("Carol", [])
-        assert 20 not in result.get("Carol", [])
+        assert result.get("Carol") == ["2026-W19"]
+        assert "2026-W18" not in result.get("Carol", [])
+        assert "2026-W20" not in result.get("Carol", [])
 
     def test_no_flag_when_all_members_critical(self):
         group = {"name": "All Critical", "members": ["Alice", "Bob"]}

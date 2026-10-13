@@ -31,6 +31,11 @@ body {
   font-size: 13px;
   background: var(--color-bg);
   color: #2c3e50;
+  /* Header + warnings + body stacked; the body takes whatever height is left, so a
+     header wrapped onto two lines (narrow screens) never pushes the timeline off-screen */
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
 }
 
 /* -------------------------------------------------------------------------
@@ -39,6 +44,7 @@ body {
 .app-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;  /* narrow screens: controls move to a second line instead of overflowing */
   gap: 12px;
   padding: 8px 16px;
   background: var(--color-header-bg);
@@ -48,7 +54,7 @@ body {
   z-index: 100;
 }
 
-.app-header h1 { font-size: 16px; font-weight: 600; flex: 1; }
+.app-header h1 { font-size: 16px; font-weight: 600; flex: 1; white-space: nowrap; }
 
 #last-loaded {
   font-size: 0.8em;
@@ -58,6 +64,27 @@ body {
 }
 
 .header-controls { display: flex; gap: 8px; }
+
+/* Time filter (From/To MM/YYYY) */
+.time-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  margin-right: 12px;
+}
+.time-filter input {
+  width: 76px;
+  padding: 4px 6px;
+  border: 1px solid #5d6d7e;
+  border-radius: 4px;
+  font-size: 12px;
+}
+#time-range-status {
+  font-size: 0.85em;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap;
+}
 
 .btn {
   padding: 5px 12px;
@@ -104,7 +131,8 @@ body {
 .app-body {
   display: flex;
   gap: 0;
-  height: calc(100vh - 50px);
+  flex: 1;
+  min-height: 0;
 }
 
 #timeline-section {
@@ -164,6 +192,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-direction: column;      /* label rendered as two lines: "CW42 2026" / "12 Oct" */
+  line-height: 1.2;
+  padding: 2px 0;
   font-size: 10px;
   font-weight: 700;
   background: #eaecee;

@@ -10,6 +10,16 @@
   <header class="app-header">
     <h1>Absence Dashboard</h1>
     <span id="last-loaded"></span>
+    <div class="time-filter">
+      <label for="time-from">From</label>
+      <input type="text" id="time-from" placeholder="MM/YYYY" size="7">
+      <label for="time-to">To</label>
+      <input type="text" id="time-to" placeholder="MM/YYYY" size="7">
+      <button id="btn-time-apply" class="btn btn-secondary">Apply</button>
+      <button id="btn-time-reset" class="btn btn-secondary" title="Back to the rolling 12 months">Reset</button>
+      <span id="time-range-status"></span>
+      <div id="time-error" class="inline-error hidden"></div>
+    </div>
     <div class="header-controls">
       <button id="btn-reload" class="btn btn-reload" title="Reload Excel data">⟳ Reload</button>
       <button id="btn-toggle-filter" class="btn btn-filter" title="Toggle between migration team and all entries">Migration Only</button>
